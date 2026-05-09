@@ -14,67 +14,47 @@
 
 ```mermaid
 flowchart LR
-    classDef mysql fill:#2563eb,stroke:#1e3a8a,stroke-width:2px,color:#ffffff,font-size:14px,font-weight:bold;
-    classDef hive fill:#ea580c,stroke:#9a3412,stroke-width:2px,color:#ffffff,font-size:14px,font-weight:bold;
-    classDef exec fill:#059669,stroke:#065f46,stroke-width:2px,color:#ffffff,font-size:14px,font-weight:bold;
-    classDef docs fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#ffffff,font-size:14px,font-weight:bold;
-    classDef qa fill:#dc2626,stroke:#7f1d1d,stroke-width:2px,color:#ffffff,font-size:14px,font-weight:bold;
+    classDef source fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef mysql fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef hive fill:#ea580c,stroke:#9a3412,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef exec fill:#059669,stroke:#065f46,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef qa fill:#dc2626,stroke:#7f1d1d,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef doc fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#ffffff,font-weight:bold;
 
-    subgraph A["MySQL 离线数仓主链路"]
+    SRC["原始零售订单数据<br/>retail"]:::source
+
+    subgraph MYSQL["MySQL 离线数仓阶段"]
         direction LR
-        A1["ODS 原始层<br/>retail"]:::mysql
-        A2["DWD 清洗层<br/>retail_clean<br/>retail_clean2"]:::mysql
-        A3["DWS 汇总层<br/>dws_sales_summary<br/>dws_customer_value"]:::mysql
-        A4["ADS 指标层<br/>复购率 / 趋势 / 排行<br/>客户分层 / 高价值客户分析"]:::mysql
-
-        A1 -->|"清洗过滤<br/>生成 amount"| A2
-        A2 -->|"主题汇总"| A3
-        A3 -->|"指标加工"| A4
-        A2 -->|"明细支撑"| A4
+        M1["ODS<br/>原始订单表"]:::mysql
+        M2["DWD<br/>订单明细清洗"]:::mysql
+        M3["DWS<br/>客户价值分层<br/>国家销售汇总"]:::mysql
+        M4["ADS<br/>复购率 / 趋势 / 排行<br/>高价值客户分析"]:::mysql
     end
 
-    subgraph B["统一执行与质量校验"]
+    subgraph ENGINEERING["工程化补充"]
         direction TB
-        B1["统一执行入口<br/>08_run_all.sql<br/>10_run_etl.bat<br/>run_etl_linux.sh"]:::exec
-        B2["ETL 批次日志<br/>11_etl_task_log.sql<br/>12_check_etl_log.sql"]:::exec
-        B3["数据质量校验<br/>13_data_quality_check.sql"]:::qa
-
-        B1 -->|"记录 START / SUCCESS / FAILED"| B2
-        B3 -->|"检查清洗质量<br/>检查结果表是否生成"| A4
+        E1["统一执行脚本<br/>08_run_all.sql<br/>run_etl_linux.sh<br/>10_run_etl.bat"]:::exec
+        E2["ETL 批次日志<br/>etl_task_log"]:::exec
+        E3["数据质量校验<br/>清洗质量 / 结果表 / 指标范围"]:::qa
     end
 
-    B1 -->|"按顺序执行<br/>DWD / DWS / ADS"| A2
-    B1 -->|"生成应用层指标"| A4
-
-    subgraph C["Hive 迁移链路"]
+    subgraph HIVE["Hive 迁移阶段"]
         direction LR
-        C1["Hive ODS<br/>00_ods_retail_hive.sql<br/>retail"]:::hive
-        C2["Hive DWD<br/>01_dwd_retail_clean_hive.sql<br/>02_load_dwd_retail_clean_hive.sql"]:::hive
-        C3["Hive DWS<br/>03_dws_customer_value_hive.sql<br/>04_dws_sales_summary_hive.sql"]:::hive
-        C4["Hive ADS<br/>05-08_ads_*.sql<br/>09_check_hive_result.sql"]:::hive
-        C5["Hive 执行脚本<br/>run_all_hive.sh<br/>bizdate 参数 / dt 分区"]:::exec
-
-        C1 -->|"原始订单数据"| C2
-        C2 -->|"清洗后明细"| C3
-        C3 -->|"客户分层<br/>国家汇总"| C4
-        C5 -->|"串联 ODS / DWD / DWS / ADS / 校验"| C1
-        C5 --> C2
-        C5 --> C3
-        C5 --> C4
+        H1["ODS<br/>00_ods_retail_hive.sql"]:::hive
+        H2["DWD<br/>dt 分区<br/>ORC 存储"]:::hive
+        H3["DWS<br/>客户价值分层<br/>国家销售汇总"]:::hive
+        H4["ADS<br/>高价值客户贡献<br/>客户分层 / 国家排行 / 商品偏好"]:::hive
     end
 
-    subgraph D["文档与补充设计"]
-        direction TB
-        D1["指标口径说明<br/>27_metric_definitions.txt"]:::docs
-        D2["调度设计说明<br/>25_scheduler_design.txt<br/>26_scheduler_demo.bat"]:::docs
-        D3["Hive 迁移设计<br/>hive_migration_design.md"]:::docs
-        D4["面试讲解材料<br/>interview_talking_points.txt<br/>interview_hive_talking_points.md"]:::docs
+    DOC["项目文档沉淀<br/>指标口径 / 调度设计 / Hive 迁移说明 / 面试要点"]:::doc
 
-        D1 -->|"统一指标定义<br/>避免口径混乱"| A4
-        D2 -->|"补充任务依赖<br/>失败处理思路"| B1
-        D3 -->|"说明 Hive 分层<br/>分区 / ORC / 重跑"| C
-        D4 -->|"用于项目展示<br/>和面试复盘"| A4
-    end
+    SRC --> M1 --> M2 --> M3 --> M4
+    M2 --> E1
+    E1 --> E2
+    E1 --> E3
+    M4 --> H1
+    H1 --> H2 --> H3 --> H4
+    H4 --> DOC
 ```
 
 ## 3. 技术栈
