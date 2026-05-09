@@ -1,0 +1,31 @@
+# ETL logs
+scripts/etl_log.txt
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Compressed files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Database / connection config
+*.env
+.env
+*.ini
+*.conf
+db_config.*
+config_local.*
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
