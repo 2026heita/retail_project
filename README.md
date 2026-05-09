@@ -12,8 +12,10 @@
 
 ## 2. 项目架构图
 
+该架构图展示了项目从原始零售订单数据导入、MySQL 离线数仓分层建模、客户价值与业务指标分析，到 Hive 离线数仓迁移、批处理脚本调度、数据质量校验和文档沉淀的完整处理链路。项目重点不是单纯编写查询 SQL，而是完整展示从原始订单数据清洗、指标口径沉淀、分析结果产出，到离线数仓迁移和工程化执行的实践过程。
+
 ```mermaid
-flowchart LR
+flowchart TB
     classDef source fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#ffffff,font-weight:bold;
     classDef mysql fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff,font-weight:bold;
     classDef hive fill:#ea580c,stroke:#9a3412,stroke-width:2px,color:#ffffff,font-weight:bold;
@@ -23,22 +25,22 @@ flowchart LR
 
     SRC["原始零售订单数据<br/>retail"]:::source
 
-    subgraph MYSQL["MySQL 离线数仓阶段"]
+    subgraph MYSQL["MySQL 离线数仓分析链路"]
         direction LR
         M1["ODS<br/>原始订单表"]:::mysql
         M2["DWD<br/>订单明细清洗"]:::mysql
         M3["DWS<br/>客户价值分层<br/>国家销售汇总"]:::mysql
-        M4["ADS<br/>复购率 / 趋势 / 排行<br/>高价值客户分析"]:::mysql
+        M4["ADS<br/>复购率 / 销售趋势 / 国家排行<br/>高价值客户分析 / 商品销售集中度"]:::mysql
     end
 
-    subgraph ENGINEERING["工程化补充"]
-        direction TB
+    subgraph ENGINEERING["工程化执行与质量控制"]
+        direction LR
         E1["统一执行脚本<br/>08_run_all.sql<br/>run_etl_linux.sh<br/>10_run_etl.bat"]:::exec
         E2["ETL 批次日志<br/>etl_task_log"]:::exec
         E3["数据质量校验<br/>清洗质量 / 结果表 / 指标范围"]:::qa
     end
 
-    subgraph HIVE["Hive 迁移阶段"]
+    subgraph HIVE["Hive 离线数仓迁移链路"]
         direction LR
         H1["ODS<br/>00_ods_retail_hive.sql"]:::hive
         H2["DWD<br/>dt 分区<br/>ORC 存储"]:::hive
@@ -48,15 +50,20 @@ flowchart LR
 
     DOC["项目文档沉淀<br/>指标口径 / 调度设计 / Hive 迁移说明 / 面试要点"]:::doc
 
-    SRC --> M1 --> M2 --> M3 --> M4
-    M2 --> E1
+    SRC --> M1
+    M1 --> M2 --> M3 --> M4
+
+    M4 --> E1
     E1 --> E2
     E1 --> E3
+
     M4 --> H1
     H1 --> H2 --> H3 --> H4
-    H4 --> DOC
-```
 
+    H4 --> DOC
+    E2 --> DOC
+    E3 --> DOC
+```
 ## 3. 技术栈
 
 - MySQL
