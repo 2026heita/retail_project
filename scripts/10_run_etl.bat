@@ -1,33 +1,44 @@
 @echo off
 chcp 65001 >nul
+setlocal
 
 REM =========================================
 REM 10_run_etl.bat
-REM 作用：执行 MySQL 版本 ETL 主脚本
-REM 说明：
-REM   1. 默认连接本地 MySQL
-REM   2. 不在脚本中写死数据库密码
-REM   3. 如需指定密码，请运行前设置环境变量 MYSQL_PASSWORD
+REM Purpose: Run the MySQL offline warehouse ETL script on Windows.
+REM GitHub public version:
+REM   - No server IP, plaintext credential, or database password is stored here.
+REM   - MySQL authentication should use mysql_config_editor login-path or local client config.
+REM   - Example local setup, do NOT commit real values:
+REM       mysql_config_editor set --login-path=retail_local --host=localhost --user=retail_user --port=3306 --password
 REM =========================================
 
-set MYSQL_HOST=127.0.0.1
-set MYSQL_PORT=3306
-set MYSQL_USER=root
-set MYSQL_DB=retail_project
+set "SCRIPT_DIR=%~dp0"
+set "PROJECT_HOME=%SCRIPT_DIR%.."
+set "RUN_SQL=%PROJECT_HOME%\sql\08_run_all.sql"
+
+if not defined MYSQL_LOGIN_PATH set "MYSQL_LOGIN_PATH=retail_local"
+if not defined MYSQL_DB set "MYSQL_DB=retail_project"
+
+if not exist "%RUN_SQL%" (
+    echo [ERROR] SQL file not found: %RUN_SQL%
+    exit /b 1
+)
 
 echo ========================================
 echo Running retail_project ETL...
+echo MySQL login-path: %MYSQL_LOGIN_PATH%
+echo MySQL database: %MYSQL_DB%
 echo ========================================
 
-if "%MYSQL_PASSWORD%"=="" (
-    mysql -h%MYSQL_HOST% -P%MYSQL_PORT% -u%MYSQL_USER% %MYSQL_DB% < 08_run_all.sql
-) else (
-    mysql -h%MYSQL_HOST% -P%MYSQL_PORT% -u%MYSQL_USER% -p%MYSQL_PASSWORD% %MYSQL_DB% < 08_run_all.sql
+mysql --login-path=%MYSQL_LOGIN_PATH% "%MYSQL_DB%" < "%RUN_SQL%"
+if errorlevel 1 (
+    echo [ERROR] ETL failed. Please check SQL errors above.
+    exit /b 1
 )
 
 echo.
 echo ========================================
-echo ETL finished.
-echo Press any key to exit.
+echo ETL finished successfully.
 echo ========================================
-pause >nul
+
+endlocal

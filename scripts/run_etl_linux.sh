@@ -1,69 +1,79 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-DB_HOST="${DB_HOST:-127.0.0.1}"
-DB_PORT="${DB_PORT:-3306}"
-DB_USER="${DB_USER:-root}"
-DB_PASSWORD="${DB_PASSWORD:-}"
-DB_NAME="${DB_NAME:-retail_project}"
+# =========================================
+# run_etl_linux.sh
+# Purpose: Run the MySQL offline warehouse ETL script and write ETL status logs.
+# GitHub public version:
+#   - No server IP, plaintext credential, or database password is stored here.
+#   - MySQL authentication should use mysql_config_editor login-path or ~/.my.cnf.
+#   - Example local setup, do NOT commit real values:
+#       mysql_config_editor set --login-path=retail_local --host=localhost --user=retail_user --port=3306 --password
+# =========================================
 
-BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_FILE="$BASE_DIR/etl_log.txt"
-RUN_SQL="$BASE_DIR/../sql/08_run_all.sql"
-LOG_TABLE_SQL="$BASE_DIR/../sql/11_etl_task_log.sql"
+MYSQL_LOGIN_PATH="${MYSQL_LOGIN_PATH:-retail_local}"
+MYSQL_DB="${MYSQL_DB:-retail_project}"
 
-BATCH_ID=$(date +"%Y%m%d_%H%M%S")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_HOME="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LOG_DIR="${PROJECT_HOME}/logs"
+LOG_FILE="${LOG_DIR}/etl_log.txt"
+RUN_SQL="${PROJECT_HOME}/sql/08_run_all.sql"
+LOG_TABLE_SQL="${PROJECT_HOME}/sql/11_etl_task_log.sql"
+BATCH_ID="$(date +"%Y%m%d_%H%M%S")"
 
-# MySQL 密码参数处理：
-# 如果 DB_PASSWORD 为空，则不传 -p，避免 MySQL 进入交互式密码输入
-MYSQL_PWD_OPT=""
-if [ -n "$DB_PASSWORD" ]; then
-  MYSQL_PWD_OPT="-p$DB_PASSWORD"
-fi
+mkdir -p "${LOG_DIR}"
 
-echo "========== ETL START ==========" | tee -a "$LOG_FILE"
-echo "batch_id=$BATCH_ID" | tee -a "$LOG_FILE"
-echo "run_time=$(date '+%F %T')" | tee -a "$LOG_FILE"
+log_info() {
+  echo "$1" | tee -a "${LOG_FILE}"
+}
 
-if [ ! -f "$RUN_SQL" ]; then
-  echo "[ERROR] 08_run_all.sql 不存在: $RUN_SQL" | tee -a "$LOG_FILE"
+run_mysql_file() {
+  local sql_file="$1"
+  mysql --login-path="${MYSQL_LOGIN_PATH}" "${MYSQL_DB}" < "${sql_file}" >> "${LOG_FILE}" 2>&1
+}
+
+run_mysql_statement() {
+  local sql_stmt="$1"
+  mysql --login-path="${MYSQL_LOGIN_PATH}" "${MYSQL_DB}" -e "${sql_stmt}" >> "${LOG_FILE}" 2>&1
+}
+
+if [[ ! -f "${RUN_SQL}" ]]; then
+  log_info "[ERROR] SQL file not found: ${RUN_SQL}"
   exit 1
 fi
 
-if [ ! -f "$LOG_TABLE_SQL" ]; then
-  echo "[ERROR] 11_etl_task_log.sql 不存在: $LOG_TABLE_SQL" | tee -a "$LOG_FILE"
+if [[ ! -f "${LOG_TABLE_SQL}" ]]; then
+  log_info "[ERROR] SQL file not found: ${LOG_TABLE_SQL}"
   exit 1
 fi
 
-mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" $MYSQL_PWD_OPT "$DB_NAME" < "$LOG_TABLE_SQL" >> "$LOG_FILE" 2>&1
-if [ $? -ne 0 ]; then
-  echo "[ERROR] 创建 etl_task_log 失败" | tee -a "$LOG_FILE"
-  exit 1
-fi
+log_info "========== ETL START =========="
+log_info "batch_id=${BATCH_ID}"
+log_info "run_time=$(date '+%F %T')"
+log_info "mysql_login_path=${MYSQL_LOGIN_PATH}"
+log_info "mysql_database=${MYSQL_DB}"
 
-mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" $MYSQL_PWD_OPT "$DB_NAME" -e "
+run_mysql_file "${LOG_TABLE_SQL}"
+
+run_mysql_statement "
 INSERT INTO etl_task_log(batch_id, task_name, run_time, status, remark)
-VALUES ('$BATCH_ID', 'run_all_etl', NOW(), 'START', '开始执行 08_run_all.sql');
-" >> "$LOG_FILE" 2>&1
+VALUES ('${BATCH_ID}', 'run_all_etl', NOW(), 'START', 'Start running 08_run_all.sql');
+"
 
-mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" $MYSQL_PWD_OPT "$DB_NAME" < "$RUN_SQL" >> "$LOG_FILE" 2>&1
-
-if [ $? -eq 0 ]; then
-  echo "[INFO] ETL 执行成功" | tee -a "$LOG_FILE"
-
-  mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" $MYSQL_PWD_OPT "$DB_NAME" -e "
+if run_mysql_file "${RUN_SQL}"; then
+  log_info "[INFO] ETL executed successfully"
+  run_mysql_statement "
   INSERT INTO etl_task_log(batch_id, task_name, run_time, status, remark)
-  VALUES ('$BATCH_ID', 'run_all_etl', NOW(), 'SUCCESS', '08_run_all.sql 执行成功');
-  " >> "$LOG_FILE" 2>&1
-
-  echo "========== ETL SUCCESS ==========" | tee -a "$LOG_FILE"
+  VALUES ('${BATCH_ID}', 'run_all_etl', NOW(), 'SUCCESS', '08_run_all.sql executed successfully');
+  "
+  log_info "========== ETL SUCCESS =========="
 else
-  echo "[ERROR] ETL 执行失败" | tee -a "$LOG_FILE"
-
-  mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" $MYSQL_PWD_OPT "$DB_NAME" -e "
+  log_info "[ERROR] ETL execution failed"
+  run_mysql_statement "
   INSERT INTO etl_task_log(batch_id, task_name, run_time, status, remark)
-  VALUES ('$BATCH_ID', 'run_all_etl', NOW(), 'FAILED', '08_run_all.sql 执行失败，请检查 etl_log.txt');
-  " >> "$LOG_FILE" 2>&1
-
-  echo "========== ETL FAILED ==========" | tee -a "$LOG_FILE"
+  VALUES ('${BATCH_ID}', 'run_all_etl', NOW(), 'FAILED', '08_run_all.sql failed. Please check logs/etl_log.txt');
+  " || true
+  log_info "========== ETL FAILED =========="
   exit 1
 fi

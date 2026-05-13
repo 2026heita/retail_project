@@ -4,71 +4,68 @@ setlocal enabledelayedexpansion
 
 REM =========================================
 REM 26_scheduler_demo.bat
-REM 作用：模拟离线数仓任务调度执行流程
-REM 包含：批次号生成、任务执行、日志查看、结果校验
-REM 说明：
-REM   1. 默认连接本地 MySQL
-REM   2. 不在脚本中写死数据库密码
-REM   3. 如需指定密码，请运行前设置环境变量 MYSQL_PASSWORD
+REM Purpose: Simulate an offline warehouse scheduling workflow on Windows.
+REM Steps: ETL build -> ETL log check -> data quality check.
+REM GitHub public version:
+REM   - No server IP, plaintext credential, or database password is stored here.
+REM   - MySQL authentication should use mysql_config_editor login-path or local client config.
+REM   - This script is for local portfolio demonstration, not production scheduling.
 REM =========================================
 
-set MYSQL_HOST=127.0.0.1
-set MYSQL_PORT=3306
-set MYSQL_USER=root
-set MYSQL_DB=retail_project
+set "SCRIPT_DIR=%~dp0"
+set "PROJECT_HOME=%SCRIPT_DIR%.."
+set "RUN_SQL=%PROJECT_HOME%\sql\08_run_all.sql"
+set "CHECK_LOG_SQL=%PROJECT_HOME%\sql\12_check_etl_log.sql"
+set "DQ_SQL=%PROJECT_HOME%\sql\13_data_quality_check.sql"
 
-set MYSQL_PWD_OPT=
-if not "%MYSQL_PASSWORD%"=="" (
-    set MYSQL_PWD_OPT=-p%MYSQL_PASSWORD%
+if not defined MYSQL_LOGIN_PATH set "MYSQL_LOGIN_PATH=retail_local"
+if not defined MYSQL_DB set "MYSQL_DB=retail_project"
+
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "BATCH_ID=%%i"
+
+if not exist "%RUN_SQL%" (
+    echo [ERROR] SQL file not found: %RUN_SQL%
+    exit /b 1
 )
-
-for /f "tokens=1-4 delims=/ " %%a in ("%date%") do (
-    set YYYY=%%a
-    set MM=%%b
-    set DD=%%c
+if not exist "%CHECK_LOG_SQL%" (
+    echo [ERROR] SQL file not found: %CHECK_LOG_SQL%
+    exit /b 1
 )
-
-for /f "tokens=1-3 delims=:." %%a in ("%time%") do (
-    set HH=%%a
-    set MI=%%b
-    set SS=%%c
+if not exist "%DQ_SQL%" (
+    echo [ERROR] SQL file not found: %DQ_SQL%
+    exit /b 1
 )
-
-set BATCH_ID=%YYYY%%MM%%DD%_%HH%%MI%%SS%
 
 echo =========================================
-echo Batch ID: %BATCH_ID%
+echo Scheduler demo batch: %BATCH_ID%
+echo MySQL login-path: %MYSQL_LOGIN_PATH%
+echo MySQL database: %MYSQL_DB%
 echo =========================================
 
-echo [1/4] Start DWD/DWS/ADS build...
-mysql -h%MYSQL_HOST% -P%MYSQL_PORT% -u%MYSQL_USER% %MYSQL_PWD_OPT% %MYSQL_DB% < 08_run_all.sql
+echo [1/3] Build DWD/DWS/ADS tables...
+mysql --login-path=%MYSQL_LOGIN_PATH% "%MYSQL_DB%" < "%RUN_SQL%"
 if errorlevel 1 (
     echo [FAILED] 08_run_all.sql
     goto :FAILED
 )
 
-echo [2/4] Check ETL log table...
-mysql -h%MYSQL_HOST% -P%MYSQL_PORT% -u%MYSQL_USER% %MYSQL_PWD_OPT% %MYSQL_DB% < 12_check_etl_log.sql
+echo [2/3] Check ETL log table...
+mysql --login-path=%MYSQL_LOGIN_PATH% "%MYSQL_DB%" < "%CHECK_LOG_SQL%"
 if errorlevel 1 (
     echo [FAILED] 12_check_etl_log.sql
     goto :FAILED
 )
 
-echo [3/4] Run data quality checks...
-mysql -h%MYSQL_HOST% -P%MYSQL_PORT% -u%MYSQL_USER% %MYSQL_PWD_OPT% %MYSQL_DB% < 13_data_quality_check.sql
+echo [3/3] Run data quality checks...
+mysql --login-path=%MYSQL_LOGIN_PATH% "%MYSQL_DB%" < "%DQ_SQL%"
 if errorlevel 1 (
     echo [FAILED] 13_data_quality_check.sql
     goto :FAILED
 )
 
-echo [4/4] Scheduler demo finished successfully.
 echo Batch %BATCH_ID% SUCCESS
-goto :END
+exit /b 0
 
 :FAILED
 echo Batch %BATCH_ID% FAILED
 exit /b 1
-
-:END
-endlocal
-pause

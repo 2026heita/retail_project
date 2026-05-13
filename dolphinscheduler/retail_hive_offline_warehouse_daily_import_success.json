@@ -1,0 +1,107 @@
+[
+  {
+    "processDefinition": {
+      "name": "retail_hive_offline_warehouse_daily",
+      "description": "零售电商 Hive 离线数仓每日调度工作流（GitHub 安全版：仅保留占位符，已移除真实服务器账号、IP 和凭据）",
+      "globalParams": "[{\"prop\":\"bizdate\",\"value\":\"$[yyyy-MM-dd-1]\",\"direct\":\"IN\",\"type\":\"VARCHAR\"}]",
+      "executionType": "PARALLEL"
+    },
+    "taskDefinitionList": [
+      {
+        "name": "ods_create_retail",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/00_ods_retail_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "dwd_create_table",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/01_dwd_retail_clean_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "dwd_load_clean_data",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/02_load_dwd_retail_clean_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "dws_customer_value",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/03_dws_customer_value_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "dws_sales_summary",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/04_dws_sales_summary_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "ads_high_value_customer_sales_contribution",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/05_ads_high_value_customer_sales_contribution_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "ads_customer_level_distribution",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/06_ads_customer_level_distribution_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "ads_country_sales_rank",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/07_ads_country_sales_rank_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "ads_high_value_customer_preference",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/08_ads_high_value_customer_preference_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "hive_data_quality_check",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/09_check_hive_result.sql\n\"",
+          "resourceList": []
+        }
+      }
+    ],
+    "schedule": {
+      "crontab": "0 0 * * * ? *",
+      "timezoneId": "Asia/Shanghai",
+      "releaseState": "OFFLINE"
+    }
+  }
+]
