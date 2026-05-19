@@ -1,3 +1,8 @@
+-- =====================================================
+-- 文件名: 04_dws_sales_summary_hive.sql
+-- 功能: 生成 DWS 国家销售汇总表
+-- =====================================================
+
 CREATE TABLE IF NOT EXISTS dws_sales_summary_hive (
     country STRING,
     total_orders BIGINT,
@@ -8,7 +13,6 @@ CREATE TABLE IF NOT EXISTS dws_sales_summary_hive (
 PARTITIONED BY (dt STRING)
 STORED AS ORC;
 
-
 INSERT OVERWRITE TABLE dws_sales_summary_hive
 PARTITION (dt = '${hiveconf:bizdate}')
 SELECT
@@ -16,7 +20,15 @@ SELECT
     COUNT(DISTINCT invoice) AS total_orders,
     COUNT(DISTINCT customerid) AS total_customers,
     CAST(ROUND(SUM(amount), 2) AS DECIMAL(14,2)) AS total_sales,
-    CAST(ROUND(SUM(amount) / COUNT(DISTINCT invoice), 2) AS DECIMAL(14,2)) AS avg_order_value
+    CAST(
+        ROUND(
+            CASE
+                WHEN COUNT(DISTINCT invoice) = 0 THEN 0
+                ELSE SUM(amount) / COUNT(DISTINCT invoice)
+            END,
+            2
+        ) AS DECIMAL(14,2)
+    ) AS avg_order_value
 FROM dwd_retail_clean_hive
 WHERE dt = '${hiveconf:bizdate}'
 GROUP BY country;

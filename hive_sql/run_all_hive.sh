@@ -2,13 +2,18 @@
 
 # =====================================================
 # 文件名: run_all_hive.sh
-# 功能: 按业务日期执行 Hive ODS / DWD / DWS / ADS / 结果校验完整链路
+# 功能: 按业务日期执行 Hive 主链路（ODS -> DWD -> DWS -> ADS -> 结果校验）
 # 用法:
 #   sh run_all_hive.sh 2026-04-08
+#
+# 说明:
+#   1. 这是项目主执行脚本，保留 00-09 的 ODS-DWD-DWS-ADS 主链路口径。
+#   2. 10_check_ods_retail_hive.sql 是 ODS 入仓校验，安排在 ODS 加载后执行。
+#   3. 每一步执行前检查 SQL 文件是否存在，每一步执行后检查返回状态。
+#   4. 任一步骤失败时立即退出，避免错误数据继续向下游扩散。
 # =====================================================
 
 BIZDATE=$1
-
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ -z "$BIZDATE" ]; then
@@ -16,6 +21,14 @@ if [ -z "$BIZDATE" ]; then
   echo "Usage: sh run_all_hive.sh 2026-04-08"
   exit 1
 fi
+
+if ! date -d "$BIZDATE" +%F >/dev/null 2>&1; then
+  echo "ERROR: invalid bizdate: $BIZDATE"
+  echo "Usage: sh run_all_hive.sh 2026-04-08"
+  exit 1
+fi
+
+BIZDATE="$(date -d "$BIZDATE" +%F)"
 
 run_hive_sql() {
   STEP_NAME=$1
@@ -42,42 +55,48 @@ run_hive_sql() {
 }
 
 echo "========================================"
-echo "Start Hive migration job"
+echo "Start Hive main warehouse job"
 echo "bizdate: ${BIZDATE}"
 echo "base_dir: ${BASE_DIR}"
 echo "========================================"
 
-run_hive_sql "[1/10] Run ODS table creation" \
+run_hive_sql "[01/12] Create ODS table" \
   "$BASE_DIR/00_ods_retail_hive.sql"
 
-run_hive_sql "[2/10] Run DWD table creation" \
+run_hive_sql "[02/12] Load ODS partition" \
+  "$BASE_DIR/00_load_ods_retail_hive.sql"
+
+run_hive_sql "[03/12] Check ODS partition" \
+  "$BASE_DIR/10_check_ods_retail_hive.sql"
+
+run_hive_sql "[04/12] Create DWD table" \
   "$BASE_DIR/01_dwd_retail_clean_hive.sql"
 
-run_hive_sql "[3/10] Run DWD data loading" \
+run_hive_sql "[05/12] Load DWD partition" \
   "$BASE_DIR/02_load_dwd_retail_clean_hive.sql"
 
-run_hive_sql "[4/10] Run DWS customer value" \
+run_hive_sql "[06/12] Build DWS customer value" \
   "$BASE_DIR/03_dws_customer_value_hive.sql"
 
-run_hive_sql "[5/10] Run DWS sales summary" \
+run_hive_sql "[07/12] Build DWS sales summary" \
   "$BASE_DIR/04_dws_sales_summary_hive.sql"
 
-run_hive_sql "[6/10] Run ADS high value customer contribution" \
+run_hive_sql "[08/12] Build ADS high value customer contribution" \
   "$BASE_DIR/05_ads_high_value_customer_sales_contribution_hive.sql"
 
-run_hive_sql "[7/10] Run ADS customer level distribution" \
+run_hive_sql "[09/12] Build ADS customer level distribution" \
   "$BASE_DIR/06_ads_customer_level_distribution_hive.sql"
 
-run_hive_sql "[8/10] Run ADS country sales rank" \
+run_hive_sql "[10/12] Build ADS country sales rank" \
   "$BASE_DIR/07_ads_country_sales_rank_hive.sql"
 
-run_hive_sql "[9/10] Run ADS high value customer preference" \
+run_hive_sql "[11/12] Build ADS high value customer preference" \
   "$BASE_DIR/08_ads_high_value_customer_preference_hive.sql"
 
-run_hive_sql "[10/10] Run Hive result check" \
+run_hive_sql "[12/12] Check Hive result" \
   "$BASE_DIR/09_check_hive_result.sql"
 
 echo "========================================"
-echo "Hive migration job finished successfully"
+echo "Hive main warehouse job finished successfully"
 echo "bizdate: ${BIZDATE}"
 echo "========================================"

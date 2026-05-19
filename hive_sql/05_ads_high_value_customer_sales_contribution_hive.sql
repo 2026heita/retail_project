@@ -1,3 +1,8 @@
+-- =====================================================
+-- 文件名: 05_ads_high_value_customer_sales_contribution_hive.sql
+-- 功能: 生成 ADS 高价值客户销售贡献表
+-- =====================================================
+
 CREATE TABLE IF NOT EXISTS ads_high_value_customer_sales_contribution_hive (
     high_value_customer_cnt BIGINT,
     high_value_order_cnt BIGINT,
@@ -21,7 +26,7 @@ SELECT
     CAST(
         ROUND(
             CASE
-                WHEN t.total_sales = 0 THEN 0
+                WHEN t.total_sales IS NULL OR t.total_sales = 0 THEN 0
                 ELSE h.high_value_total_sales / t.total_sales * 100
             END,
             2
@@ -52,7 +57,7 @@ FROM (
     SELECT
         COUNT(DISTINCT dwd.customerid) AS high_value_customer_cnt,
         COUNT(DISTINCT dwd.invoice) AS high_value_order_cnt,
-        CAST(ROUND(SUM(dwd.amount), 2) AS DECIMAL(14,2)) AS high_value_total_sales
+        CAST(ROUND(COALESCE(SUM(dwd.amount), 0), 2) AS DECIMAL(14,2)) AS high_value_total_sales
     FROM dwd_retail_clean_hive dwd
     JOIN dws_customer_value_hive dws
       ON dwd.customerid = dws.customerid
@@ -62,7 +67,7 @@ FROM (
 ) h
 CROSS JOIN (
     SELECT
-        CAST(ROUND(SUM(amount), 2) AS DECIMAL(14,2)) AS total_sales
+        CAST(ROUND(COALESCE(SUM(amount), 0), 2) AS DECIMAL(14,2)) AS total_sales
     FROM dwd_retail_clean_hive
     WHERE dt = '${hiveconf:bizdate}'
 ) t;

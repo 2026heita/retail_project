@@ -2,7 +2,7 @@
   {
     "processDefinition": {
       "name": "retail_hive_offline_warehouse_daily",
-      "description": "零售电商 Hive 离线数仓每日调度工作流（GitHub 安全版：仅保留占位符，已移除真实服务器账号、IP 和凭据）",
+      "description": "零售电商 Hive 离线数仓每日调度工作流示例，包含 ODS 建表、ODS 加载、DWD、DWS、ADS 和数据质量校验节点",
       "globalParams": "[{\"prop\":\"bizdate\",\"value\":\"$[yyyy-MM-dd-1]\",\"direct\":\"IN\",\"type\":\"VARCHAR\"}]",
       "executionType": "PARALLEL"
     },
@@ -13,6 +13,15 @@
         "taskParams": {
           "localParams": [],
           "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/00_ods_retail_hive.sql\n\"",
+          "resourceList": []
+        }
+      },
+      {
+        "name": "ods_load_retail",
+        "taskType": "SHELL",
+        "taskParams": {
+          "localParams": [],
+          "rawScript": "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} \"\nsource /etc/profile\nsource ~/.bash_profile 2>/dev/null\nhive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/00_load_ods_retail_hive.sql\n\"",
           "resourceList": []
         }
       },
@@ -102,6 +111,60 @@
       "crontab": "0 0 * * * ? *",
       "timezoneId": "Asia/Shanghai",
       "releaseState": "OFFLINE"
-    }
+    },
+    "dagDependency": [
+      {
+        "upstream": "ods_create_retail",
+        "downstream": "ods_load_retail"
+      },
+      {
+        "upstream": "ods_load_retail",
+        "downstream": "dwd_create_table"
+      },
+      {
+        "upstream": "dwd_create_table",
+        "downstream": "dwd_load_clean_data"
+      },
+      {
+        "upstream": "dwd_load_clean_data",
+        "downstream": "dws_customer_value"
+      },
+      {
+        "upstream": "dwd_load_clean_data",
+        "downstream": "dws_sales_summary"
+      },
+      {
+        "upstream": "dws_customer_value",
+        "downstream": "ads_high_value_customer_sales_contribution"
+      },
+      {
+        "upstream": "dws_customer_value",
+        "downstream": "ads_customer_level_distribution"
+      },
+      {
+        "upstream": "dws_customer_value",
+        "downstream": "ads_high_value_customer_preference"
+      },
+      {
+        "upstream": "dws_sales_summary",
+        "downstream": "ads_country_sales_rank"
+      },
+      {
+        "upstream": "ads_high_value_customer_sales_contribution",
+        "downstream": "hive_data_quality_check"
+      },
+      {
+        "upstream": "ads_customer_level_distribution",
+        "downstream": "hive_data_quality_check"
+      },
+      {
+        "upstream": "ads_high_value_customer_preference",
+        "downstream": "hive_data_quality_check"
+      },
+      {
+        "upstream": "ads_country_sales_rank",
+        "downstream": "hive_data_quality_check"
+      }
+    ]
   }
 ]

@@ -1,26 +1,55 @@
 调度设计说明
 
 一、补充目的
-原项目已经具备统一执行入口、批量运行脚本、ETL 日志表和数据质量校验脚本。为进一步贴近离线数仓项目工程化场景，本项目接入 DolphinScheduler，将 Hive 离线数仓链路从“脚本顺序执行”扩展为“可视化 DAG 任务流”。
+原项目已经具备 Hive SQL 脚本、统一执行脚本、任务日志表和数据质量校验脚本。接入 DolphinScheduler 后，将 Hive 离线数仓链路从“脚本顺序执行”扩展为“可视化 DAG 任务流”，用于展示任务拆分、依赖编排、业务日期参数化、运行状态追踪和结果验收能力。
 
 二、任务链路设计
-1. ODS 准备任务：创建或准备原始订单数据表。
-2. DWD 清洗任务：过滤异常数量、异常价格、空客户和退货订单，生成清洗后的明细表。
-3. DWS 汇总任务：生成销售汇总表和客户价值分层表。
-4. ADS 指标任务：生成客户分层分布、国家销售排行、高价值客户销售贡献、高价值客户商品偏好等指标表。
-5. 数据质量校验任务：检查结果表是否成功生成、指定业务日期分区是否有数据，以及关键字段是否存在异常值。
+1. ODS 建表任务：创建或准备正式 ODS 分区表 ods_retail_hive。
+2. ODS 加载任务：将 retail 源表中指定 bizdate 的数据写入 ods_retail_hive 对应 dt 分区。
+3. DWD 建表与加载任务：创建清洗明细表，并过滤异常数量、异常价格、空客户和退货订单。
+4. DWS 汇总任务：生成客户价值分层表和国家销售汇总表。
+5. ADS 指标任务：生成高价值客户销售贡献、客户分层分布、国家销售排行、高价值客户商品偏好等指标表。
+6. 数据质量校验任务：检查各层分区是否有数据、清洗结果是否存在异常、客户分层边界是否正确、ADS 指标是否处于合理范围。
 
-三、任务依赖关系
-ODS -> DWD -> DWS -> ADS -> 数据质量校验
+三、任务节点列表
+1. ods_create_retail：执行 00_ods_retail_hive.sql，创建或准备 ODS 分区表。
+2. ods_load_retail：执行 00_load_ods_retail_hive.sql，将 retail 源表写入 ods_retail_hive 分区。
+3. dwd_create_table：执行 01_dwd_retail_clean_hive.sql，创建 DWD 清洗明细表。
+4. dwd_load_clean_data：执行 02_load_dwd_retail_clean_hive.sql，生成 DWD 清洗数据。
+5. dws_customer_value：执行 03_dws_customer_value_hive.sql，生成客户价值分层。
+6. dws_sales_summary：执行 04_dws_sales_summary_hive.sql，生成国家销售汇总。
+7. ads_high_value_customer_sales_contribution：执行 05_ads_high_value_customer_sales_contribution_hive.sql。
+8. ads_customer_level_distribution：执行 06_ads_customer_level_distribution_hive.sql。
+9. ads_country_sales_rank：执行 07_ads_country_sales_rank_hive.sql。
+10. ads_high_value_customer_preference：执行 08_ads_high_value_customer_preference_hive.sql。
+11. hive_data_quality_check：执行 09_check_hive_result.sql，完成结果校验。
 
-四、批次管理设计
-项目通过 `bizdate` 参数控制业务日期，默认使用 DolphinScheduler 全局参数 `$[yyyy-MM-dd-1]` 调度上一天数据。手动补数时可以指定具体业务日期。
+四、任务依赖关系
+ods_create_retail
+  -> ods_load_retail
+  -> dwd_create_table
+  -> dwd_load_clean_data
+      -> dws_customer_value
+          -> ads_high_value_customer_sales_contribution
+          -> ads_customer_level_distribution
+          -> ads_high_value_customer_preference
+      -> dws_sales_summary
+          -> ads_country_sales_rank
 
-五、失败处理思路
-当某一层任务执行失败时，应停止下游任务执行，优先排查失败原因。问题修复后，可以基于同一业务日期重新执行失败任务及其后续任务。Hive 结果表使用 `INSERT OVERWRITE PARTITION` 写入方式，便于指定分区重跑并保证幂等性。
+ads_high_value_customer_sales_contribution
+ads_customer_level_distribution
+ads_high_value_customer_preference
+ads_country_sales_rank
+  -> hive_data_quality_check
 
-六、结果验收设计
-每次调度完成后，通过数据质量校验脚本对核心结果表进行检查，包括清洗结果、DWS 分层结果、ADS 指标结果、指定业务日期分区和关键指标范围。
+五、批次管理设计
+项目通过 bizdate 参数控制业务日期，默认使用 DolphinScheduler 全局参数 $[yyyy-MM-dd-1] 调度上一天数据。手动补数时可以指定具体业务日期。Hive 结果表使用 INSERT OVERWRITE PARTITION 写入方式，便于指定分区重跑并保证幂等性。
 
-七、GitHub 上传说明
-公开仓库中不保留真实服务器账号、真实内网 IP、明文密码或数据库连接凭据。涉及远程执行的命令统一使用 `${HIVE_USER}`、`${HIVE_HOST}`、`${PROJECT_HOME}` 等占位符表示。
+六、失败处理思路
+当某一层任务执行失败时，下游任务不应继续执行。问题修复后，可以基于同一业务日期重新执行失败节点及其后续节点。由于各层按 dt 分区覆盖写入，重复执行同一天任务不会产生重复数据。
+
+七、结果验收设计
+每次调度完成后，通过数据质量校验脚本对核心结果表进行检查，包括 ODS/DWD/DWS/ADS 分区行数、DWD 清洗质量、DWS 客户分层边界、ADS 指标范围和排行字段有效性。
+
+八、公开仓库说明
+公开仓库中不保留真实服务器账号、真实内网 IP、明文密码或数据库连接凭据。涉及远程执行的命令统一使用 ${HIVE_USER}、${HIVE_HOST}、${PROJECT_HOME} 等占位符表示。
