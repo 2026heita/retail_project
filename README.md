@@ -8,7 +8,7 @@
 
 1. **MySQL 阶段**：完成订单清洗、主题汇总、应用层指标输出、统一执行脚本、ETL 日志记录和数据质量校验。
 2. **Hive 主链路阶段**：将核心链路迁移到 Hive，构建 `ODS -> DWD -> DWS -> ADS` 分层结构，使用 `dt` 分区、ORC 列式存储、`bizdate` 参数和 `INSERT OVERWRITE PARTITION` 分区覆盖写入，支持指定业务日期重跑。
-3. **工程化扩展阶段**：补充区间回刷、T+1 修正窗口、ODS 入仓校验、最终结果校验、DolphinScheduler 调度编排，并额外增加 `11-22` 星型模型扩展链路，用于展示维度建模能力。
+3. **工程化扩展阶段**：补充区间回刷、T+1 修正窗口、ODS 入仓校验、质量日志落表、最终结果校验、DolphinScheduler 调度编排，并额外增加 `11-22` 星型模型扩展链路，用于展示维度建模能力。
 
 本项目重点不是单纯写 SQL 查询，而是展示从原始订单数据清洗、客户价值分层、指标沉淀，到 Hive 离线数仓迁移、DolphinScheduler 调度编排和工程化执行的完整实践过程。
 
@@ -25,6 +25,7 @@ flowchart LR
     C --> D["工程化执行<br/>单日执行 / 区间回刷 / T+1 修正"]
     D --> E["DolphinScheduler 调度<br/>参数化 DAG / 运行追踪"]
     C --> F["结果校验<br/>ODS 入仓校验 / DWD 清洗校验 / ADS 指标校验"]
+    C --> Q["质量日志<br/>quality_log_hive / PASS-FAIL / 异常数量"]
     C --> G["星型模型扩展<br/>维表 / 事实表 / 主题汇总"]
     F --> H["运行截图与验收证据<br/>多天分区 / 幂等性 / T+1"]
     E --> H
@@ -34,7 +35,7 @@ flowchart LR
     classDef check fill:#eefbf3,stroke:#22a06b,stroke-width:1px,color:#111;
     class C,D,E core;
     class G extend;
-    class F,H check;
+    class F,H,Q check;
 ```
 
 ### 2.2 Hive 数仓主链路与星型模型扩展
@@ -44,6 +45,7 @@ flowchart TB
     S["retail 源表"] --> ODS["ODS：ods_retail_hive<br/>按 InvoiceDate 解析业务日期并写入 dt 分区"]
     ODS --> DWD["DWD：dwd_retail_clean_hive<br/>过滤异常数量 / 异常价格 / 空客户 / 退货订单"]
 
+    DWD --> QL["Quality：quality_log_hive<br/>DWD 清洗质量日志"]
     DWD --> DWS1["DWS：dws_customer_value_hive<br/>客户价值分层"]
     DWD --> DWS2["DWS：dws_sales_summary_hive<br/>国家销售汇总"]
 
@@ -65,7 +67,9 @@ flowchart TB
     classDef layer fill:#e8f3ff,stroke:#2f80ed,stroke-width:1px,color:#111;
     classDef ads fill:#fff7e6,stroke:#f59e0b,stroke-width:1px,color:#111;
     classDef star fill:#f4f0ff,stroke:#8b5cf6,stroke-width:1px,color:#111;
+    classDef check fill:#eefbf3,stroke:#22a06b,stroke-width:1px,color:#111;
     class ODS,DWD,DWS1,DWS2 layer;
+    class QL check;
     class ADS1,ADS2,ADS3,ADS4 ads;
     class U,P,T,G,FO,STAR star;
 ```
@@ -89,6 +93,7 @@ flowchart TB
 - 星型模型维度建模
 - 数据质量校验
 - ETL 批次日志记录
+- HTML + ECharts（轻量 BI Dashboard）
 
 ---
 
@@ -123,6 +128,9 @@ retail_project/
 │   ├── 20_dim_geo_hive.sql
 │   ├── 21_load_dim_geo_hive.sql
 │   ├── 22_load_dim_date_hive.sql
+│   ├── 23_quality_log_hive.sql
+│   ├── 24_load_quality_log_hive.sql
+│   ├── 25_check_quality_log_hive.sql
 │   ├── run_all_hive.sh
 │   ├── run_backfill_hive.sh
 │   ├── run_t1_window_hive.sh
@@ -130,6 +138,10 @@ retail_project/
 │   ├── run_star_schema_hive.sh
 │   ├── hive_migration_design.md
 │   └── interview_hive_talking_points.md
+├── retail_bi_dashboard/
+│   ├── data/                      # 导出的 Hive ADS 数据 TSV 文件
+│   ├── create_dashboard.py         # 生成 HTML Dashboard 的脚本
+│   └── dashboard.html              # 生成的轻量 BI Dashboard 页面，可直接打开查看
 ├── dolphinscheduler/
 │   ├── dq_check_result.sql
 │   ├── etl_task_log_v2.sql
@@ -150,6 +162,8 @@ retail_project/
     │   ├── 04_ads_customer_level_distribution_20260408.png
     │   ├── 05_ads_country_sales_rank_20260408.png
     │   ├── 06_ads_customer_preference_20260408.png
+    │   ├── 07_light_bi_dashboard_top_20260408.png
+    │   ├── 08_light_bi_dashboard_bottom_20260408.png
     │   └── README.md
     └── result_screenshots_validation/
         ├── 01_7day_ods_partition_check.png
@@ -158,10 +172,13 @@ retail_project/
         ├── 04_idempotency_check_20260403.png
         ├── 05_t1_window_check_20260406_20260407.png
         ├── 06_dwd_cleaning_quality_20260401.png
+        ├── 07_quality_log_20260408.png（可选，用于展示 quality_log_hive 查询结果）
         └── README.md
 ```
 
 说明：原始数据文件较大，仓库中不建议上传完整数据集。运行项目前，需要提前准备同字段结构的订单数据表。`scripts/` 目录中的脚本属于 MySQL 阶段的本地执行与调度模拟脚本，不是 Hive 主链路的生产调度入口。
+
+轻量级 BI Dashboard 位于 `retail_bi_dashboard/` 目录，`data/` 存放从 Hive ADS 层导出的 TSV 文件，`create_dashboard.py` 用于生成 `dashboard.html`。生成后的 `dashboard.html` 可以直接用浏览器打开查看，不依赖 Superset 或其他重型 BI 工具。
 
 ---
 
@@ -250,6 +267,8 @@ run_idempotency_check_hive.sh：验收用幂等性检查脚本，重跑指定 bi
 10_check_ods_retail_hive.sql
 01_dwd_retail_clean_hive.sql
 02_load_dwd_retail_clean_hive.sql
+23_quality_log_hive.sql
+24_load_quality_log_hive.sql
 03_dws_customer_value_hive.sql
 04_dws_sales_summary_hive.sql
 05_ads_high_value_customer_sales_contribution_hive.sql
@@ -266,6 +285,7 @@ sh hive_sql/run_all_hive.sh 2026-04-08
 sh hive_sql/run_backfill_hive.sh 2026-04-01 2026-04-08
 sh hive_sql/run_t1_window_hive.sh 2026-04-08
 sh hive_sql/run_idempotency_check_hive.sh 2026-04-03
+hive --hiveconf bizdate=2026-04-08 -f hive_sql/25_check_quality_log_hive.sql
 ```
 
 
@@ -283,7 +303,42 @@ run_etl_linux.sh：Linux 环境下执行 MySQL ETL，并写入 START / SUCCESS /
 
 ---
 
-## 8. 星型模型扩展链路
+## 8. 数据质量日志模块
+
+在 Hive 主链路中补充了一个最小版本的数据质量日志模块，用于把 DWD 清洗质量检查结果沉淀到 Hive 表中。
+
+相关文件：
+
+```text
+23_quality_log_hive.sql        创建质量日志表 quality_log_hive
+24_load_quality_log_hive.sql   写入指定业务日期的 DWD 清洗质量检查结果
+25_check_quality_log_hive.sql  查看指定业务日期的质量日志
+```
+
+`quality_log_hive` 记录的核心字段包括：
+
+```text
+table_name      被检查表名
+check_item      检查项名称
+abnormal_cnt    异常数量
+check_status    检查状态，PASS 或 FAIL
+check_time      检查时间
+dt              业务日期分区
+```
+
+当前质量模块不做复杂规则系统，只保留最小可落地能力：主链路在 DWD 清洗完成后写入质量日志，主要检查 DWD 层是否仍存在无效数量、无效价格和空客户 ID 等异常数据。`abnormal_cnt = 0` 表示该检查项通过，状态为 `PASS`；否则状态为 `FAIL`。
+
+查看指定业务日期质量日志：
+
+```bash
+hive --hiveconf bizdate=2026-04-08 -f hive_sql/25_check_quality_log_hive.sql
+```
+
+这个模块的作用是把原来只在控制台输出的检查结果保存下来，方便按 `dt` 追踪质量检查结果，也方便后续接入 DolphinScheduler 或做验收截图。
+
+---
+
+## 9. 星型模型扩展链路
 
 `11-22` 是基于 DWD 清洗明细补充的星型模型扩展链路，不替代 `00-09` 主链路。
 
@@ -317,7 +372,7 @@ sh hive_sql/run_star_schema_hive.sh 2026-04-08
 
 ---
 
-## 9. DolphinScheduler 调度设计
+## 10. DolphinScheduler 调度设计
 
 工作流名称：
 
@@ -374,7 +429,7 @@ ads_country_sales_rank
 
 ---
 
-## 10. 数据质量校验
+## 11. 数据质量校验
 
 数据质量校验目标不是只确认 SQL 是否执行成功，而是进一步确认结果表和核心指标是否可用。校验内容包括：
 
@@ -384,11 +439,12 @@ ads_country_sales_rank
 - DWS 客户分层结果是否为空、是否合法、边界是否正确；
 - ADS 指标表是否生成；
 - 指定业务日期 `dt/bizdate` 是否存在结果数据；
-- 销售贡献占比、排名、销售额等关键字段是否存在异常范围。
+- 销售贡献占比、排名、销售额等关键字段是否存在异常范围；
+- DWD 清洗质量检查结果是否成功写入 `quality_log_hive`，并能按业务日期查询 PASS / FAIL 状态。
 
 ---
 
-## 11. 多天分区运行验证
+## 12. 多天分区运行验证
 
 为证明项目不是只能跑单天样例，本项目额外构造了 `2026-04-01` 到 `2026-04-07` 共 7 天连续业务日期数据，并完成完整链路验证。
 
@@ -422,28 +478,41 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 
 ---
 
-## 12. 项目亮点
+## 13. 项目亮点
 
 1. 完成 MySQL 到 Hive 的核心指标迁移，形成 ODS、DWD、DWS、ADS 分层主链路。
 2. 设计 `dt` 分区、ORC 存储、`bizdate` 参数和 `INSERT OVERWRITE PARTITION`，支持按业务日期幂等重跑。
 3. 基于 7 天连续业务日期完成 ODS -> DWD -> ADS 跨天分区验证，并完成单日幂等性和 T+1 窗口验证。
 4. 编写 `run_all_hive.sh`、`run_backfill_hive.sh`、`run_t1_window_hive.sh` 和 `run_idempotency_check_hive.sh`，支持单日执行、区间回刷、T+1 修正窗口和幂等性验收。
 5. 补充 `10_check_ods_retail_hive.sql` 和 `09_check_hive_result.sql`，覆盖 ODS 入仓校验和最终结果校验。
-6. 补充 `11-22` 星型模型扩展链路，展示维度建模、代理键、事实表和维表关联能力。
-7. 接入 DolphinScheduler，将 Hive 主链路拆分为可视化 DAG 任务节点，实现参数化调度、运行状态追踪和结果验收。
-8. 围绕高价值客户形成客户分层、客户偏好、国家销售排行和销售贡献的完整分析链路。
+6. 增加最小版质量日志模块 `quality_log_hive`，将 DWD 清洗质量检查结果按业务日期落表，记录异常数量和 PASS / FAIL 状态。
+7. 补充 `11-22` 星型模型扩展链路，展示维度建模、代理键、事实表和维表关联能力。
+8. 接入 DolphinScheduler，将 Hive 主链路拆分为可视化 DAG 任务节点，实现参数化调度、运行状态追踪和结果验收。
+9. 围绕高价值客户形成客户分层、客户偏好、国家销售排行和销售贡献的完整分析链路。
+10. 补充轻量级 BI Dashboard，基于 Hive ADS 层导出数据构建 HTML + ECharts 可视化展示，呈现高价值客户贡献、客户价值分层、国家销售排行和高价值客户商品偏好。
+
+### 13.1 轻量级 BI Dashboard 说明
+
+轻量级 BI Dashboard 基于 Hive ADS 层导出数据，使用 HTML + ECharts 构建，可展示核心 ADS 指标：
+
+- 高价值客户贡献
+- 客户价值分层
+- 国家销售排行
+- 高价值客户商品偏好
+
+该 Dashboard 为轻量展示页面，不依赖 Superset 或重型 BI 工具，适合项目演示和作品集展示。
 
 ---
 
-## 13. 运行结果截图
+## 14. 运行结果截图
 
 项目运行截图按用途拆分为两个目录，避免把单日 ADS 展示截图和多天分区验证截图混在一起。
 
-### 13.1 调度与 ADS 结果截图
+### 14.1 调度与 ADS 结果截图
 
 目录：`docs/result_screenshots/`
 
-该目录用于展示 DolphinScheduler 调度状态和 `dt=2026-04-08` 的核心 ADS 结果，主要包括：
+该目录用于展示 DolphinScheduler 调度状态、`dt=2026-04-08` 的核心 ADS 结果和轻量级 BI Dashboard 展示截图，主要包括：
 
 ```text
 01_ds_workflow_instance_success.png
@@ -452,15 +521,23 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 04_ads_customer_level_distribution_20260408.png
 05_ads_country_sales_rank_20260408.png
 06_ads_customer_preference_20260408.png
+07_light_bi_dashboard_top_20260408.png
+08_light_bi_dashboard_bottom_20260408.png
 ```
+
+轻量级 BI Dashboard 截图说明：
+
+- `07_light_bi_dashboard_top_20260408.png`：上半部分展示高价值客户贡献、客户价值分层人数和销售贡献占比。
+- `08_light_bi_dashboard_bottom_20260408.png`：下半部分展示国家销售排行 Top10 和高价值客户偏好商品 Top10。
 
 这些截图用于说明：
 
 - DolphinScheduler 工作流实例可以成功执行；
 - 主链路 DAG 中 ODS、DWD、DWS、ADS 和最终校验节点依赖关系清晰；
-- `dt=2026-04-08` 的高价值客户销售贡献、客户分层分布、国家销售排行和高价值客户商品偏好等 ADS 指标表可以正常查询。
+- `dt=2026-04-08` 的高价值客户销售贡献、客户分层分布、国家销售排行和高价值客户商品偏好等 ADS 指标表可以正常查询；
+- 基于 ADS 导出数据生成的轻量级 BI Dashboard 可以集中展示核心指标，适合作为项目演示和作品集展示页。
 
-### 13.2 多天分区与工程能力验证截图
+### 14.2 多天分区与工程能力验证截图
 
 目录：`docs/result_screenshots_validation/`
 
@@ -473,6 +550,7 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 04_idempotency_check_20260403.png
 05_t1_window_check_20260406_20260407.png
 06_dwd_cleaning_quality_20260401.png
+07_quality_log_20260408.png（可选，用于展示 quality_log_hive 查询结果）
 ```
 
 这些截图用于说明：
@@ -482,25 +560,26 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 - ADS 国家销售排行在连续 7 个业务日期中均能产出结果；
 - 重复执行同一业务日期后，关键表行数保持一致，验证 `INSERT OVERWRITE PARTITION` 的幂等性；
 - T+1 修正窗口可以回刷前一天和当天分区；
-- DWD 清洗校验可以展示异常数量、异常价格、空客户和退货订单等过滤情况。
+- DWD 清洗校验可以展示异常数量、异常价格、空客户和退货订单等过滤情况；
+- 如果补充 `07_quality_log_20260408.png`，可以展示质量日志表按业务日期落表后的 PASS / FAIL 结果。
 
 说明：截图仅作为项目运行验收示例，不作为真实业务运营结论。多天数据用于验证分区回刷能力，不表述为真实业务连续 7 天数据。
 
 ---
 
-## 14. 项目边界说明
+## 15. 项目边界说明
 
 本项目是面向学习与作品集展示的电商离线数仓项目，主要用于展示 SQL 开发、数仓分层建模、指标沉淀、Hive 迁移、调度编排和数据质量校验能力。项目结果基于当前数据集统计，不等同于真实业务运营指标，也不直接推导实际业务收益。
 
 ---
 
-## 15. 运行前准备
+## 16. 运行前准备
 
 运行 Hive 或 DolphinScheduler 调度前，需要完成以下准备：
 
 ```text
 1. Hive 中已经存在源表 retail，且字段与 README 中的数据说明一致；
-2. InvoiceDate 字段格式需要与 Hive SQL 中的日期解析格式保持一致；当前脚本示例主要按 `d/M/yyyy HH:mm:ss` 解析，如源数据为 `yyyy-MM-dd HH:mm:ss`，需要同步调整 ODS、DWD 和星型模型中的日期解析格式；
+2. InvoiceDate 字段格式需要与 Hive SQL 中的日期解析格式保持一致；当前脚本示例主要按 `yyyy-MM-dd HH:mm:ss` 解析业务日期；
 3. hive_sql/ 目录已部署到 ${PROJECT_HOME}/hive_sql；
 4. DolphinScheduler 执行环境已配置 HIVE_USER、HIVE_HOST、PROJECT_HOME；
 5. SSH 已配置免密或密钥登录。
@@ -508,7 +587,7 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 
 ---
 
-## 16. GitHub 上传说明
+## 17. GitHub 上传说明
 
 公开仓库中不要上传以下内容：
 
