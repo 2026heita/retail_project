@@ -476,6 +476,23 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 - ODS、DWD、ADS 在跨天场景下结果稳定。
 
 
+
+### 12.1 Hive 性能优化与回归验证
+
+在不改变主链路表名、分区字段、`bizdate` 参数和 `run_all_hive.sh` 执行顺序的前提下，本项目补充了一轮 Hive 性能优化与全链路回归验证。
+
+本轮优化主要包括：
+
+- **数据倾斜定位**：通过 `country`、`customerid`、`stockcode` 分布检查，发现 `country='United Kingdom'` 在 `dt=2026-04-08` 的 DWD 分区中约 2,175,699 行，占比分区总量约 69.6%，属于典型国家维度数据倾斜。
+- **DWS 倾斜处理**：针对 `04_dws_sales_summary_hive.sql` 中的 `GROUP BY country`，将国家销售汇总改造为手写 Salt + 两阶段聚合。销售额先按 `country + salt_key` 局部聚合，再回收为国家粒度；订单数和客户数涉及去重统计，采用先 `country + invoice/customerid` 去重、再按国家汇总的方式，避免 Salt 后重复计数。
+- **Join 优化**：针对 `05_ads_high_value_customer_sales_contribution_hive.sql` 和 `08_ads_high_value_customer_preference_hive.sql` 中 DWD 明细大表 Join DWS 客户价值小表的场景，使用 `MAPJOIN` 广播小表，减少 Shuffle 开销。
+- **分区裁剪修正**：在 ADS Join 逻辑中补充 `dws.dt='${hiveconf:bizdate}'` 条件，避免跨分区 Join 导致结果重复放大。
+- **DWD 清洗修正**：修正 `02_load_dwd_retail_clean_hive.sql` 中清洗条件拼接问题，并补充 `stockcode`、`country`、`invoicedate` 的非空和非空字符串过滤。
+- **EXPLAIN 验证**：通过 `EXPLAIN` 确认 ADS Join 查询中出现 `Map Join Operator`，说明 MAPJOIN 生效。
+- **全链路回归**：执行 `run_all_hive.sh 2026-04-08` 完成 ODS、DWD、DWS、ADS 和最终质量校验的完整回归，主链路成功结束。
+
+这轮优化的重点不是单纯修改 SQL，而是形成了“发现倾斜 → 定位热点 key → 改写 SQL → EXPLAIN 验证 → 全链路回归”的完整优化闭环。
+
 ---
 
 ## 13. 项目亮点
@@ -490,6 +507,8 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 8. 接入 DolphinScheduler，将 Hive 主链路拆分为可视化 DAG 任务节点，实现参数化调度、运行状态追踪和结果验收。
 9. 围绕高价值客户形成客户分层、客户偏好、国家销售排行和销售贡献的完整分析链路。
 10. 补充轻量级 BI Dashboard，基于 Hive ADS 层导出数据构建 HTML + ECharts 可视化展示，呈现高价值客户贡献、客户价值分层、国家销售排行和高价值客户商品偏好。
+11. 针对 `country` 维度严重倾斜问题，基于 key 分布分析定位热点国家，并在国家销售汇总中使用手写 Salt + 两阶段聚合完成优化。
+12. 针对 DWD 大表 Join DWS 小表场景，在高价值客户销售贡献和高价值客户商品偏好 ADS 中使用 MAPJOIN，并通过 EXPLAIN 验证 Map Join Operator 生效。
 
 ### 13.1 轻量级 BI Dashboard 说明
 

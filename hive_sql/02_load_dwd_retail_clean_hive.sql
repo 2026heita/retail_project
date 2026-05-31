@@ -26,8 +26,8 @@ WHERE dt = '${hiveconf:bizdate}'
   AND customerid IS NOT NULL
   AND TRIM(customerid) <> ''
   AND invoice IS NOT NULL
-  AND UPPER(TRIM(invoice)) NOT LIKE 'C%';
+  AND UPPER(TRIM(invoice)) NOT LIKE 'C%'
   AND TRIM(invoice) <> ''
   AND stockcode IS NOT NULL AND TRIM(stockcode) <> ''
   AND country IS NOT NULL AND TRIM(country) <> ''
-  AND invoicedate IS NOT NULL AND TRIM(invoicedate) <> ''
+  AND invoicedate IS NOT NULL AND TRIM(invoicedate) <> '';

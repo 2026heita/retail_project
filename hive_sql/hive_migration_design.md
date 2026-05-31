@@ -183,6 +183,48 @@ T+1 窗口：回刷 2026-04-06 和 2026-04-07 后结果稳定
 
 ---
 
+## 7.1 Hive SQL 性能优化
+
+在主链路验证完成后，对 Hive SQL 执行计划和数据分布进行了简单优化实践。
+
+### 数据倾斜分析与优化
+
+统计发现国家维度存在明显热点 Key：
+
+```text
+United Kingdom ≈ 217 万
+总记录数 ≈ 312 万
+占比约 69.6%
+```
+
+针对 `GROUP BY country` 场景，采用 Salt + 两阶段聚合方式缓解 Reduce 端数据倾斜问题。
+
+### Join 优化
+
+在 ADS 层分析发现：
+
+```text
+dwd_retail_clean_hive
+JOIN
+dws_customer_value_hive
+```
+
+属于典型的大表 Join 小表场景。
+
+因此对高价值客户贡献分析和客户商品偏好分析引入 MAPJOIN，并通过 EXPLAIN 验证 Map Join Operator 生效。
+
+### 回归验证
+
+优化完成后重新执行：
+
+```bash
+sh run_all_hive.sh 2026-04-08
+```
+
+主链路全部通过，结果与优化前保持一致。
+
+---
+
 ## 8. 面试时如何说明两条链路
 
 建议这样说：

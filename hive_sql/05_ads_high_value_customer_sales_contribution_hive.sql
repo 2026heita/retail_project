@@ -1,6 +1,7 @@
 -- =====================================================
 -- 文件名: 05_ads_high_value_customer_sales_contribution_hive.sql
 -- 功能: 生成 ADS 高价值客户销售贡献表
+-- 优化: 大表 dwd join 小表 dws_customer_value，使用 MAPJOIN
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS ads_high_value_customer_sales_contribution_hive (
@@ -22,7 +23,6 @@ SELECT
     h.high_value_order_cnt,
     h.high_value_total_sales,
     t.total_sales,
-
     CAST(
         ROUND(
             CASE
@@ -32,7 +32,6 @@ SELECT
             2
         ) AS DECIMAL(10,2)
     ) AS sales_contribution_pct,
-
     CAST(
         ROUND(
             CASE
@@ -42,7 +41,6 @@ SELECT
             2
         ) AS DECIMAL(14,2)
     ) AS avg_sales_per_customer,
-
     CAST(
         ROUND(
             CASE
@@ -52,22 +50,22 @@ SELECT
             2
         ) AS DECIMAL(10,2)
     ) AS avg_orders_per_customer
-
 FROM (
-    SELECT
-        COUNT(DISTINCT dwd.customerid) AS high_value_customer_cnt,
-        COUNT(DISTINCT dwd.invoice) AS high_value_order_cnt,
-        CAST(ROUND(COALESCE(SUM(dwd.amount), 0), 2) AS DECIMAL(14,2)) AS high_value_total_sales
-    FROM dwd_retail_clean_hive dwd
-    JOIN dws_customer_value_hive dws
-      ON dwd.customerid = dws.customerid
-    WHERE dwd.dt = '${hiveconf:bizdate}'
-      AND dws.dt = '${hiveconf:bizdate}'
-      AND dws.customer_level = 'High Value'
+    SELECT /*+ MAPJOIN(cv) */
+        COUNT(DISTINCT cv.customerid) AS high_value_customer_cnt,
+        COUNT(DISTINCT d.invoice) AS high_value_order_cnt,
+        CAST(SUM(d.amount) AS DECIMAL(14,2)) AS high_value_total_sales
+    FROM dwd_retail_clean_hive d
+    JOIN dws_customer_value_hive cv
+        ON d.customerid = cv.customerid
+    WHERE d.dt = '${hiveconf:bizdate}'
+      AND cv.dt = '${hiveconf:bizdate}'
+      AND cv.customer_level = 'High Value'
 ) h
-CROSS JOIN (
+JOIN (
     SELECT
-        CAST(ROUND(COALESCE(SUM(amount), 0), 2) AS DECIMAL(14,2)) AS total_sales
+        CAST(SUM(amount) AS DECIMAL(14,2)) AS total_sales
     FROM dwd_retail_clean_hive
     WHERE dt = '${hiveconf:bizdate}'
-) t;
+) t
+ON 1=1;

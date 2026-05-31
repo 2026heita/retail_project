@@ -21,7 +21,7 @@ SELECT
     t.total_sales,
     RANK() OVER (ORDER BY t.total_sales DESC) AS sales_rank
 FROM (
-    SELECT
+    SELECT /*+ MAPJOIN(dws) */
         dwd.stockcode,
         dwd.description,
         COUNT(DISTINCT dwd.customerid) AS high_value_customer_cnt,
@@ -30,7 +30,7 @@ FROM (
         CAST(ROUND(SUM(dwd.amount), 2) AS DECIMAL(14,2)) AS total_sales
     FROM dwd_retail_clean_hive dwd
     JOIN dws_customer_value_hive dws
-      ON dwd.customerid = dws.customerid
+        ON dwd.customerid = dws.customerid
     WHERE dwd.dt = '${hiveconf:bizdate}'
       AND dws.dt = '${hiveconf:bizdate}'
       AND dws.customer_level = 'High Value'
