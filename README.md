@@ -102,6 +102,8 @@ flowchart TB
 ```text
 retail_project/
 ├── README.md
+├── sample_data/
+│   └── retail_sample.csv           # 最小样例数据，用于验证 Hive 主链路
 ├── sql/
 ├── hive_sql/
 │   ├── 00_ods_retail_hive.sql
@@ -153,6 +155,7 @@ retail_project/
 │   ├── 26_scheduler_demo.bat
 │   └── run_etl_linux.sh
 └── docs/
+    ├── setup_local_hive.md         # 本地 Hive 运行指南
     ├── 25_scheduler_design.txt
     ├── 27_metric_definitions.txt
     ├── result_screenshots/
@@ -204,6 +207,29 @@ amount = Quantity * Price
 ```
 
 所有指标默认基于清洗后的有效订单数据统计，不包含异常数量、异常价格、空客户和退货订单。
+
+### 5.1 样例数据
+
+仓库提供最小样例数据：
+
+```text
+sample_data/retail_sample.csv
+```
+
+该样例数据用于验证 Hive 主链路能否按业务日期完成 ODS、DWD、DWS、ADS 分层产出，不代表完整原始数据集。完整原始数据量较大，公开仓库中不上传全量数据。
+
+本地运行说明见：
+
+```text
+docs/setup_local_hive.md
+```
+
+最小验证命令：
+
+```bash
+cd hive_sql
+sh run_all_hive.sh 2026-04-08
+```
 
 ---
 
