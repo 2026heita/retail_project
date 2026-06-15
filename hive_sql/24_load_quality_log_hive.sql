@@ -7,7 +7,7 @@
 --   3. abnormal_cnt = 0 记为 PASS，否则记为 FAIL
 -- =====================================================
 
-INSERT INTO TABLE quality_log_hive
+INSERT OVERWRITE TABLE quality_log_hive
 PARTITION (dt='${hiveconf:bizdate}')
 
 SELECT

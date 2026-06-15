@@ -17,7 +17,7 @@ SELECT
     CAST(Quantity AS BIGINT) AS quantity,
     CAST(InvoiceDate AS STRING) AS invoicedate,
     CAST(Price AS DECIMAL(10,2)) AS price,
-    CAST(CAST(CustomerID AS BIGINT) AS STRING) AS customerid,
+    TRIM(CAST(CustomerID AS STRING)) AS customerid,
     CAST(Country AS STRING) AS country
 FROM retail
 WHERE from_unixtime(
