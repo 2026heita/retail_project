@@ -184,6 +184,28 @@ Hive main warehouse job finished successfully
 bizdate: 2026-04-08
 ```
 
+**单独验证 DWD 质量门禁：**
+
+```bash
+bash run_quality_gate_hive.sh 2026-04-08
+```
+
+通过时应输出：
+
+```text
+Data quality gate passed.
+failed_count=0
+```
+
+`run_quality_gate_hive.sh` 必须使用 Unix `LF` 换行。若从 Windows 手工上传，可执行：
+
+```bash
+sed -i 's/\r$//' run_quality_gate_hive.sh
+chmod +x run_quality_gate_hive.sh
+```
+
+如果执行 Hive 时出现 `hadoop100:8020 Connection refused`，应先检查并启动 HDFS NameNode，而不是修改质量门禁脚本。
+
 ## 8. ODS 层逻辑说明
 
 ODS 层用于保存指定业务日期的原始订单数据。

@@ -18,7 +18,7 @@ WITH dwd_parsed AS (
         amount,
         CAST(
             FROM_UNIXTIME(
-                UNIX_TIMESTAMP(invoicedate, 'd/M/yyyy HH:mm:ss'),
+                UNIX_TIMESTAMP(invoicedate, 'yyyy-MM-dd HH:mm:ss'),
                 'yyyy-MM-dd'
             ) AS DATE
         ) AS invoice_date

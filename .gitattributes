@@ -1,0 +1,6 @@
+# Keep executable scripts and project text files stable across Windows/Linux.
+*.sh  text eol=lf
+*.sql text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
+*.bat text eol=crlf

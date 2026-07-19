@@ -4,6 +4,18 @@
 -- 优化: country 倾斜处理，两阶段聚合 + 安全 CAST
 -- =====================================================
 
+CREATE TABLE IF NOT EXISTS dws_sales_summary_hive (
+    country STRING COMMENT '国家',
+    total_orders BIGINT COMMENT '订单数',
+    total_customers BIGINT COMMENT '客户数',
+    total_sales DECIMAL(14,2) COMMENT '销售总额',
+    avg_order_value DECIMAL(14,2) COMMENT '平均订单金额'
+)
+COMMENT 'DWS 国家销售汇总表'
+PARTITIONED BY (dt STRING COMMENT '业务日期')
+STORED AS ORC;
+
+
 SET hive.exec.dynamic.partition=true;
 SET hive.exec.dynamic.partition.mode=nonstrict;
 SET hive.groupby.skewindata=false;

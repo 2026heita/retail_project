@@ -22,10 +22,10 @@
 flowchart LR
     A["原始零售订单数据<br/>retail"] --> B["MySQL 阶段<br/>清洗 / 汇总 / ADS 指标"]
     B --> C["Hive 主链路<br/>ODS → DWD → DWS → ADS"]
-    C --> D["工程化执行<br/>单日执行 / 区间回刷 / T+1 修正"]
+    C --> QG["DWD 质量门禁<br/>quality_log_hive / FAIL 阻断"]
+    QG --> D["工程化执行<br/>单日执行 / 区间回刷 / T+1 修正"]
     D --> E["DolphinScheduler 调度<br/>参数化 DAG / 运行追踪"]
     C --> F["结果校验<br/>ODS 入仓校验 / DWD 清洗校验 / ADS 指标校验"]
-    C --> Q["质量日志<br/>quality_log_hive / PASS-FAIL / 异常数量"]
     C --> G["星型模型扩展<br/>维表 / 事实表 / 主题汇总"]
     F --> H["运行截图与验收证据<br/>多天分区 / 幂等性 / T+1"]
     E --> H
@@ -35,7 +35,7 @@ flowchart LR
     classDef check fill:#eefbf3,stroke:#22a06b,stroke-width:1px,color:#111;
     class C,D,E core;
     class G extend;
-    class F,H,Q check;
+    class F,H,QG check;
 ```
 
 ### 2.2 Hive 数仓主链路与星型模型扩展
@@ -45,9 +45,9 @@ flowchart TB
     S["retail 源表"] --> ODS["ODS：ods_retail_hive<br/>按 InvoiceDate 解析业务日期并写入 dt 分区"]
     ODS --> DWD["DWD：dwd_retail_clean_hive<br/>过滤异常数量 / 异常价格 / 空客户 / 退货订单"]
 
-    DWD --> QL["Quality：quality_log_hive<br/>DWD 清洗质量日志"]
-    DWD --> DWS1["DWS：dws_customer_value_hive<br/>客户价值分层"]
-    DWD --> DWS2["DWS：dws_sales_summary_hive<br/>国家销售汇总"]
+    DWD --> QL["Quality Gate：quality_log_hive<br/>PASS 继续 / FAIL 阻断"]
+    QL --> DWS1["DWS：dws_customer_value_hive<br/>客户价值分层"]
+    QL --> DWS2["DWS：dws_sales_summary_hive<br/>国家销售汇总"]
 
     DWS1 --> ADS1["ADS：高价值客户销售贡献"]
     DWS1 --> ADS2["ADS：客户层级分布"]
@@ -137,6 +137,7 @@ retail_project/
 │   ├── run_backfill_hive.sh
 │   ├── run_t1_window_hive.sh
 │   ├── run_idempotency_check_hive.sh
+│   ├── run_quality_gate_hive.sh
 │   ├── run_star_schema_hive.sh
 │   ├── hive_migration_design.md
 │   └── interview_hive_talking_points.md
@@ -149,6 +150,7 @@ retail_project/
 │   ├── etl_task_log_v2.sql
 │   ├── hive_task_nodes.md
 │   ├── workflow_design.md
+│   ├── deployment_mysql_ssh.md
 │   └── retail_hive_offline_warehouse_daily_demo.json
 ├── scripts/
 │   ├── 10_run_etl.bat
@@ -160,15 +162,16 @@ retail_project/
     ├── 27_metric_definitions.txt
     ├── result_screenshots/
     │   ├── 01_ds_workflow_instance_success.png
-    │   ├── 02_ds_dag_all_tasks_success.png
-    │   ├── 03_ads_sales_contribution_20260408.png
-    │   ├── 04_ads_customer_level_distribution_20260408.png
-    │   ├── 05_ads_country_sales_rank_20260408.png
-    │   ├── 06_ads_customer_preference_20260408.png
-    │   ├── 07_light_bi_dashboard_top_20260408.png
-    │   ├── 08_light_bi_dashboard_bottom_20260408.png
+    │   ├── 02_ds_dag_quality_gate_success.png
+    │   ├── 03_dwd_quality_gate_passed.png
+    │   ├── 04_ads_sales_contribution_20260408.png
+    │   ├── 05_ads_customer_level_distribution_20260408.png
+    │   ├── 06_ads_country_sales_rank_20260408.png
+    │   ├── 07_ads_customer_preference_20260408.png
+    │   ├── 08_light_bi_dashboard_top_20260408.png
+    │   ├── 09_light_bi_dashboard_bottom_20260408.png
     │   └── README.md
-    └── result_screenshots_validation/
+    └── multiday_validation_screenshots/
         ├── 01_7day_ods_partition_check.png
         ├── 02_7day_dwd_partition_check.png
         ├── 03_7day_ads_country_rank_check.png
@@ -244,6 +247,8 @@ ods_retail_hive
   ↓
 dwd_retail_clean_hive
   ↓
+dwd_quality_gate（quality_log_hive，FAIL 阻断）
+  ↓
 ├── dws_customer_value_hive
 ├── dws_sales_summary_hive
   ↓
@@ -283,6 +288,7 @@ run_all_hive.sh：执行单个 bizdate 的完整主链路
 run_backfill_hive.sh：按日期区间循环回刷
 run_t1_window_hive.sh：回刷 bizdate 前一天和当天，支持 T+1 延迟数据修正窗口
 run_idempotency_check_hive.sh：验收用幂等性检查脚本，重跑指定 bizdate 并对比关键表行数
+run_quality_gate_hive.sh：DolphinScheduler DWD 质量门禁，存在 FAIL 时返回非零状态
 ```
 
 `run_all_hive.sh` 执行顺序：
@@ -311,6 +317,7 @@ sh hive_sql/run_all_hive.sh 2026-04-08
 sh hive_sql/run_backfill_hive.sh 2026-04-01 2026-04-08
 sh hive_sql/run_t1_window_hive.sh 2026-04-08
 sh hive_sql/run_idempotency_check_hive.sh 2026-04-03
+bash hive_sql/run_quality_gate_hive.sh 2026-04-08
 hive --hiveconf bizdate=2026-04-08 -f hive_sql/25_check_quality_log_hive.sql
 ```
 
@@ -339,6 +346,7 @@ run_etl_linux.sh：Linux 环境下执行 MySQL ETL，并写入 START / SUCCESS /
 23_quality_log_hive.sql        创建质量日志表 quality_log_hive
 24_load_quality_log_hive.sql   写入指定业务日期的 DWD 清洗质量检查结果
 25_check_quality_log_hive.sql  查看指定业务日期的质量日志
+run_quality_gate_hive.sh       写入质量日志、统计 FAIL，并向调度平台返回成功/失败状态
 ```
 
 `quality_log_hive` 记录的核心字段包括：
@@ -357,10 +365,11 @@ dt              业务日期分区
 查看指定业务日期质量日志：
 
 ```bash
+bash hive_sql/run_quality_gate_hive.sh 2026-04-08
 hive --hiveconf bizdate=2026-04-08 -f hive_sql/25_check_quality_log_hive.sql
 ```
 
-这个模块的作用是把原来只在控制台输出的检查结果保存下来，方便按 `dt` 追踪质量检查结果，也方便后续接入 DolphinScheduler 或做验收截图。
+这个模块不仅把检查结果保存到 Hive，还作为 DolphinScheduler 的硬门禁：`failed_count=0` 时返回 0 并允许两个 DWS 分支继续；存在 FAIL 或无法读取检查结果时返回非零状态，阻断后续 DWS/ADS。
 
 ---
 
@@ -400,58 +409,69 @@ sh hive_sql/run_star_schema_hive.sh 2026-04-08
 
 ## 10. DolphinScheduler 调度设计
 
-工作流名称：
+工作流逻辑名称：
 
 ```text
 retail_hive_offline_warehouse_daily
 ```
 
+已完成的工程配置：
+
+- DolphinScheduler 3.2.2 Docker Standalone；
+- 元数据库由 H2 内存库迁移到 MySQL，实现项目、工作流与实例持久化；
+- 自定义镜像加入 MySQL Connector/J 与 OpenSSH Client；
+- Shell 节点通过 SSH 调用 Hadoop/Hive 主机；
+- 12 个节点完整 DAG 已验收成功。
+
 全局参数：
 
 ```text
-bizdate = $[yyyy-MM-dd-1]
+bizdate=$[yyyy-MM-dd-1]
+HIVE_USER=<SSH 用户>
+HIVE_HOST=<Hive 主机>
+PROJECT_HOME=<服务器项目根目录>
 ```
 
-执行方式：DolphinScheduler Shell 节点不在容器内直接执行 Hive，而是通过 SSH 调用部署 Hive 的 Linux 主机执行 Hive SQL。公开仓库中不保留真实服务器账号、真实 IP 或明文密码，统一使用以下占位符：
-
-```text
-${HIVE_USER}
-${HIVE_HOST}
-${PROJECT_HOME}
-```
-
-命令模板：
+仓库中的 `hive_sql/` 在服务器部署为 `${PROJECT_HOME}/hive/`，因此普通节点模板为：
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} "
 source /etc/profile
-source ~/.bash_profile 2>/dev/null
-hive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive_sql/SQL文件名
+source ~/.bash_profile 2>/dev/null || true
+hive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive/SQL文件名
 "
 ```
 
-当前 DolphinScheduler 主链路调度顺序：
+质量门禁节点执行：
+
+```bash
+bash ${PROJECT_HOME}/hive/run_quality_gate_hive.sh ${bizdate}
+```
+
+当前 DAG：
 
 ```text
 ods_create_retail
-  -> ods_load_retail
-  -> dwd_create_table
-  -> dwd_load_clean_data
-      -> dws_customer_value
-          -> ads_high_value_customer_sales_contribution
-          -> ads_customer_level_distribution
-          -> ads_high_value_customer_preference
-      -> dws_sales_summary
-          -> ads_country_sales_rank
+  → ods_load_retail
+  → dwd_create_table
+  → dwd_load_clean_data
+  → dwd_quality_gate
+      ├→ dws_customer_value
+      │    ├→ ads_high_value_customer_sales_contribution
+      │    ├→ ads_customer_level_distribution
+      │    └→ ads_high_value_customer_preference
+      └→ dws_sales_summary
+           └→ ads_country_sales_rank
 
-ads_high_value_customer_sales_contribution
-ads_customer_level_distribution
-ads_high_value_customer_preference
-ads_country_sales_rank
-  -> hive_data_quality_check
+四个 ADS 节点
+  → hive_data_quality_check
 ```
 
-说明：`10_check_ods_retail_hive.sql` 保留为脚本级 ODS 入仓校验，已在 `run_all_hive.sh` 中执行；DolphinScheduler 示例工作流主要展示主 ETL DAG 和最终质量校验节点。星型模型扩展链路可以单独作为扩展工作流，不建议强行混入主调度 DAG。
+DolphinScheduler 3.2.2 工作流 JSON 导入时，`processTaskRelationList` 必须存在且非空，并使用合法数值任务编码。详细说明见：
+
+- `dolphinscheduler/workflow_design.md`
+- `dolphinscheduler/hive_task_nodes.md`
+- `dolphinscheduler/deployment_mysql_ssh.md`
 
 ---
 
@@ -528,9 +548,9 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 3. 基于 7 天连续业务日期完成 ODS -> DWD -> ADS 跨天分区验证，并完成单日幂等性和 T+1 窗口验证。
 4. 编写 `run_all_hive.sh`、`run_backfill_hive.sh`、`run_t1_window_hive.sh` 和 `run_idempotency_check_hive.sh`，支持单日执行、区间回刷、T+1 修正窗口和幂等性验收。
 5. 补充 `10_check_ods_retail_hive.sql` 和 `09_check_hive_result.sql`，覆盖 ODS 入仓校验和最终结果校验。
-6. 增加最小版质量日志模块 `quality_log_hive`，将 DWD 清洗质量检查结果按业务日期落表，记录异常数量和 PASS / FAIL 状态。
+6. 增加 `quality_log_hive` 与 `run_quality_gate_hive.sh`，将 DWD 质量结果按业务日期落表，并通过非零退出码阻断下游 DWS/ADS。
 7. 补充 `11-22` 星型模型扩展链路，展示维度建模、代理键、事实表和维表关联能力。
-8. 接入 DolphinScheduler，将 Hive 主链路拆分为可视化 DAG 任务节点，实现参数化调度、运行状态追踪和结果验收。
+8. 接入 DolphinScheduler 3.2.2，将元数据库由 H2 迁移到 MySQL 持久化，并通过自定义镜像补充 MySQL Connector/J 与 OpenSSH Client，完成 12 节点 DAG 验收。
 9. 围绕高价值客户形成客户分层、客户偏好、国家销售排行和销售贡献的完整分析链路。
 10. 补充轻量级 BI Dashboard，基于 Hive ADS 层导出数据构建 HTML + ECharts 可视化展示，呈现高价值客户贡献、客户价值分层、国家销售排行和高价值客户商品偏好。
 11. 针对 `country` 维度严重倾斜问题，基于 key 分布分析定位热点国家，并在国家销售汇总中使用手写 Salt + 两阶段聚合完成优化。
@@ -561,19 +581,34 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 
 ```text
 01_ds_workflow_instance_success.png
-02_ds_dag_all_tasks_success.png
-03_ads_sales_contribution_20260408.png
-04_ads_customer_level_distribution_20260408.png
-05_ads_country_sales_rank_20260408.png
-06_ads_customer_preference_20260408.png
-07_light_bi_dashboard_top_20260408.png
-08_light_bi_dashboard_bottom_20260408.png
+02_ds_dag_quality_gate_success.png
+03_dwd_quality_gate_passed.png
+04_ads_sales_contribution_20260408.png
+05_ads_customer_level_distribution_20260408.png
+06_ads_country_sales_rank_20260408.png
+07_ads_customer_preference_20260408.png
+08_light_bi_dashboard_top_20260408.png
+09_light_bi_dashboard_bottom_20260408.png
 ```
 
 轻量级 BI Dashboard 截图说明：
 
-- `07_light_bi_dashboard_top_20260408.png`：上半部分展示高价值客户贡献、客户价值分层人数和销售贡献占比。
-- `08_light_bi_dashboard_bottom_20260408.png`：下半部分展示国家销售排行 Top10 和高价值客户偏好商品 Top10。
+- `08_light_bi_dashboard_top_20260408.png`：上半部分展示高价值客户贡献、客户价值分层人数和销售贡献占比。
+- `09_light_bi_dashboard_bottom_20260408.png`：下半部分展示国家销售排行 Top10 和高价值客户偏好商品 Top10。
+
+### 14.1.1 核心验收截图预览
+
+工作流实例成功：
+
+![DolphinScheduler 工作流实例成功](docs/result_screenshots/01_ds_workflow_instance_success.png)
+
+完整 DAG（含 DWD 质量门禁）：
+
+![DolphinScheduler DAG 全部成功](docs/result_screenshots/02_ds_dag_quality_gate_success.png)
+
+质量门禁通过：
+
+![DWD 质量门禁通过](docs/result_screenshots/03_dwd_quality_gate_passed.png)
 
 这些截图用于说明：
 
@@ -584,7 +619,7 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 
 ### 14.2 多天分区与工程能力验证截图
 
-目录：`docs/result_screenshots_validation/`
+目录：`docs/multiday_validation_screenshots/`
 
 该目录用于展示 Hive 主链路的多天分区、区间回刷、幂等性和 T+1 修正窗口验证，主要包括：
 
@@ -625,9 +660,10 @@ T+1 验证：执行 2026-04-07 修正窗口后，2026-04-06 和 2026-04-07 分�
 ```text
 1. Hive 中已经存在源表 retail，且字段与 README 中的数据说明一致；
 2. InvoiceDate 字段格式需要与 Hive SQL 中的日期解析格式保持一致；当前脚本示例主要按 `yyyy-MM-dd HH:mm:ss` 解析业务日期；
-3. hive_sql/ 目录已部署到 ${PROJECT_HOME}/hive_sql；
+3. 仓库 `hive_sql/` 已部署或挂载到服务器 `${PROJECT_HOME}/hive/`；
 4. DolphinScheduler 执行环境已配置 HIVE_USER、HIVE_HOST、PROJECT_HOME；
-5. SSH 已配置免密或密钥登录。
+5. SSH 已配置免密或密钥登录；
+6. HDFS NameNode、DataNode 以及 Hive 运行环境已启动，`hdfs dfs -ls /` 和 `hive -e "show databases;"` 可正常返回。
 ```
 
 ---
