@@ -8,8 +8,15 @@
 - 节点依赖编排与失败阻断；
 - 工作流、任务实例和日志留痕；
 - DWD 进入 DWS 前的数据质量门禁；
-- ADS 结果层的最终质量检查；
-- 为后续补数、告警和重试提供扩展基础。
+- ADS 结果层的最终检查；
+- 为后续补数、告警、重试和完整星型链路编排提供扩展基础。
+
+本项目当前同时保留两种执行方式：
+
+1. DolphinScheduler 12 节点演示 DAG，用于展示可视化任务编排和 DWD 质量门禁；
+2. `run_all_hive.sh` 15 步完整 Shell 主链路，用于执行 DWD、DWS/ADS、星型模型三级质量门禁。
+
+两者职责不同，文档中不把当前 12 节点演示 DAG 描述成已经包含完整星型模型。
 
 ## 2. 当前实现方式
 
@@ -25,7 +32,16 @@ DolphinScheduler 3.2.2（Docker）
           ↓ SSH
 Hadoop / HDFS / Hive 主机
           ↓
-ODS → DWD → 质量门禁 → DWS → ADS → 最终质量检查
+ODS → DWD → DWD质量门禁 → DWS → ADS → 结果检查
+```
+
+完整 Shell 主链路为：
+
+```text
+ODS → DWD → DWD质量门禁
+    → DWS / ADS → 结果质量门禁
+    → 星型模型 → 星型质量门禁
+    → 结果展示
 ```
 
 公开仓库不保留真实服务器账号、真实 IP、数据库密码或 SSH 私钥，统一使用 `${HIVE_USER}`、`${HIVE_HOST}`、`${PROJECT_HOME}` 等占位参数。
@@ -63,19 +79,23 @@ ${PROJECT_HOME}/hive/
 
 ## 5. 工作流分层设计
 
+当前 DolphinScheduler 演示 DAG：
+
 ```text
 ODS 建表与分区加载
   → DWD 明细清洗
   → DWD 数据质量门禁
   → DWS 主题汇总
   → ADS 应用指标
-  → ADS 最终质量检查
+  → 结果检查
 ```
 
 其中：
 
-- `dwd_quality_gate` 是硬门禁，失败时直接阻断 DWS 与 ADS；
-- `hive_data_quality_check` 位于流程末尾，用于检查 ADS 结果是否满足预期。
+- `dwd_quality_gate` 是硬门禁，BLOCK 规则失败时直接阻断 DWS 与 ADS；
+- `hive_data_quality_check` 位于流程末尾，执行结果展示与人工验收查询；
+- 当前导入 JSON 仍是 12 节点演示 DAG，没有直接展开 DWS/ADS 结果门禁和星型模型节点；
+- 完整三级门禁已在 `run_all_hive.sh` 中实现，后续可继续映射为 DolphinScheduler 节点。
 
 ## 6. 任务节点列表
 
@@ -85,14 +105,14 @@ ODS 建表与分区加载
 | 2 | `ods_load_retail` | 将源表数据写入 ODS 业务日期分区 | `00_load_ods_retail_hive.sql` |
 | 3 | `dwd_create_table` | 创建 DWD 清洗明细表 | `01_dwd_retail_clean_hive.sql` |
 | 4 | `dwd_load_clean_data` | 从 ODS 清洗并加载 DWD 分区 | `02_load_dwd_retail_clean_hive.sql` |
-| 5 | `dwd_quality_gate` | 写入质量日志并在存在 FAIL 时阻断下游 | `run_quality_gate_hive.sh` |
+| 5 | `dwd_quality_gate` | 写入质量日志并在 BLOCK 规则失败时阻断下游 | `run_quality_gate_hive.sh` |
 | 6 | `dws_customer_value` | 生成客户价值汇总 | `03_dws_customer_value_hive.sql` |
 | 7 | `dws_sales_summary` | 生成国家销售汇总 | `04_dws_sales_summary_hive.sql` |
 | 8 | `ads_high_value_customer_sales_contribution` | 高价值客户销售贡献分析 | `05_ads_high_value_customer_sales_contribution_hive.sql` |
 | 9 | `ads_customer_level_distribution` | 客户等级分布分析 | `06_ads_customer_level_distribution_hive.sql` |
 | 10 | `ads_country_sales_rank` | 国家销售排行分析 | `07_ads_country_sales_rank_hive.sql` |
 | 11 | `ads_high_value_customer_preference` | 高价值客户商品偏好分析 | `08_ads_high_value_customer_preference_hive.sql` |
-| 12 | `hive_data_quality_check` | ADS 结果数据质量校验 | `09_check_hive_result.sql` |
+| 12 | `hive_data_quality_check` | 展示并检查 ODS / DWD / DWS / ADS 结果 | `09_check_hive_result.sql` |
 
 ## 7. 调度执行方式
 
@@ -115,6 +135,18 @@ source ~/.bash_profile 2>/dev/null || true
 bash ${PROJECT_HOME}/hive/run_quality_gate_hive.sh ${bizdate}
 "
 ```
+
+完整 Shell 主链路也可以作为单个 DolphinScheduler Shell 节点调用：
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} "
+source /etc/profile
+source ~/.bash_profile 2>/dev/null || true
+bash ${PROJECT_HOME}/hive/run_all_hive.sh ${bizdate}
+"
+```
+
+这种方式能直接复用已经验证过的 15 步主链路，但会降低 DolphinScheduler DAG 中的节点可视化粒度，因此当前仓库仍保留拆分节点的演示方案。
 
 ## 8. DAG 依赖关系
 
@@ -146,15 +178,34 @@ ads_country_sales_rank
 
 1. `23_quality_log_hive.sql`：创建质量日志表；
 2. `24_load_quality_log_hive.sql`：写入指定 `bizdate` 的检查结果；
-3. 查询 `quality_log_hive` 中 `check_status='FAIL'` 的记录数；
+3. 查询 `quality_log_hive` 中 `check_status='FAIL'` 且 `check_level='BLOCK'` 的记录数；
 4. 当 `failed_count > 0` 或结果无法读取时返回非零状态；
 5. 只有 `failed_count=0` 时允许继续执行 DWS 和 ADS。
 
-### 9.2 ADS 最终质量检查
+当前 DWD 门禁包括无效数量、无效价格、空客户、DWD 分区非空、ODS 与 DWD 行数对账和时间格式检查。
 
-`hive_data_quality_check` 执行 `09_check_hive_result.sql`，用于核对 ADS 结果表是否存在数据和是否满足最终输出要求。
+### 9.2 演示 DAG 结果检查
 
-DWD 质量门禁与 ADS 最终检查职责不同：前者负责阻断脏数据继续向下游传播，后者负责确认结果层产出完整。
+`hive_data_quality_check` 执行 `09_check_hive_result.sql`，用于展示和人工核对：
+
+- ODS / DWD / DWS / ADS 各层分区行数；
+- DWD 清洗质量；
+- DWS 客户分层边界；
+- ADS 指标范围与排行字段。
+
+该节点当前是查询式结果检查，不是依靠质量日志表和非零退出码实现的硬门禁。
+
+### 9.3 完整 Shell 主链路质量门禁
+
+`run_all_hive.sh` 中已经实现三级质量门禁：
+
+1. `run_quality_gate_hive.sh`：DWD 前置门禁；
+2. `run_result_quality_gate_hive.sh`：DWS / ADS 后置门禁；
+3. `run_star_quality_gate_hive.sh`：星型模型门禁，由 `run_star_schema_hive.sh` 自动调用。
+
+三类门禁都区分 BLOCK 和 WARN。BLOCK 失败时返回非零退出码并停止下游任务，WARN 只记录不阻断。
+
+当前 DolphinScheduler 演示 JSON 只直接展开了第一层 DWD 门禁。完整三级门禁的真实实现以 Shell 主链路为准。
 
 ## 10. DolphinScheduler 元数据库持久化
 
@@ -174,17 +225,25 @@ Standalone 默认 H2 内存数据库不适合长期保存项目元数据。本�
 - 首节点根关系（`preTaskCode = 0`）；
 - 与任务关系编码一致的 `taskDefinitionList`。
 
+该 JSON 对应当前 12 节点演示 DAG，不代表完整 15 步 Shell 主链路已经全部拆分成 DolphinScheduler 节点。
+
 不同项目和不同环境的项目编码可能不同。跨环境迁移时，建议先在目标环境创建一个最小工作流并原生导出，再以该文件为模板调整。
 
 ## 12. 验收结果
 
-当前工作流已完成真实运行验收：
+当前 DolphinScheduler 演示工作流已完成真实运行验收：
 
 - 12 个任务节点全部执行成功；
 - DWD 质量门禁输出 `Data quality gate passed.`；
 - `failed_count=0`；
 - 工作流实例与任务实例正常落入 MySQL 元数据库；
 - DolphinScheduler 容器重启后工作流和实例记录仍可保留。
+
+完整 Shell 主链路另外完成了以下验收：
+
+- `run_all_hive.sh` 已接入 DWD、DWS/ADS 和星型模型三级质量门禁；
+- 星型模型 12 条质量规则在 `2026-04-08` 全部 PASS；
+- 空业务日期测试能够返回非零退出码并阻断任务。
 
 验收截图：
 
@@ -204,8 +263,8 @@ Standalone 默认 H2 内存数据库不适合长期保存项目元数据。本�
 
 ## 14. 后续优化方向
 
-1. 增加任务失败告警和通知策略；
-2. 增加自动重试和超时策略；
-3. 增加历史分区补数工作流；
-4. 将更多质量规则扩展到完整性、唯一性、及时性和一致性维度；
+1. 将 DWS/ADS 结果门禁和星型模型链路继续拆分为 DolphinScheduler 可视化节点；
+2. 增加任务失败告警和通知策略；
+3. 增加自动重试和超时策略；
+4. 增加历史分区补数工作流；
 5. 增加 DolphinScheduler 集群化部署和 Worker 分组。

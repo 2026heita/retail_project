@@ -45,7 +45,8 @@ FAILED_COUNT=$(
         SELECT COUNT(1)
         FROM quality_log_hive
         WHERE dt='${BIZDATE}'
-          AND check_status='FAIL';
+          AND check_status='FAIL'
+          AND check_level='BLOCK';
     " 2>/dev/null |
     grep -E '^[0-9]+$' |
     tail -n 1

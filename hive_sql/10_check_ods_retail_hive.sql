@@ -4,7 +4,8 @@
 -- 说明:
 --   1. 校验指定 bizdate 的 ODS 分区是否有数据
 --   2. 校验核心字段空值、异常值、日期解析失败
---   3. 为后续 DWD 标准化事实层提供依据
+--   3. 日期解析兼容 yyyy-MM-dd HH:mm:ss 和 d/M/yyyy HH:mm:ss
+--   4. 为后续 DWD 标准化事实层提供依据
 -- 执行:
 --   hive --hiveconf bizdate=2026-04-08 -f hive_sql/10_check_ods_retail_hive.sql
 -- =====================================================
@@ -56,13 +57,26 @@ WHERE dt = '${hiveconf:bizdate}'
   AND UPPER(TRIM(invoice)) LIKE 'C%';
 
 
--- 5. 日期解析失败检查
+-- 5. 日期解析失败检查：兼容两种源格式
 SELECT
     '${hiveconf:bizdate}' AS bizdate,
     COUNT(*) AS parse_failed_cnt
 FROM ods_retail_hive
 WHERE dt = '${hiveconf:bizdate}'
-  AND unix_timestamp(invoicedate, 'yyyy-MM-dd HH:mm:ss') IS NULL;
+  AND (
+        invoicedate IS NULL
+        OR TRIM(invoicedate) = ''
+        OR COALESCE(
+               UNIX_TIMESTAMP(
+                   TRIM(invoicedate),
+                   'yyyy-MM-dd HH:mm:ss'
+               ),
+               UNIX_TIMESTAMP(
+                   TRIM(invoicedate),
+                   'd/M/yyyy HH:mm:ss'
+               )
+           ) IS NULL
+      );
 
 
 -- 6. 查看样例数据，确认字段是否长得正常

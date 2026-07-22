@@ -1,103 +1,115 @@
 #!/bin/bash
+set -Eeuo pipefail
 
 # =====================================================
 # 文件名: run_star_schema_hive.sh
-# 功能: 执行 11-22 星型模型扩展链路
+# 功能: 构建指定业务日期的星型模型，并执行质量门禁
 # 用法:
-#   sh run_star_schema_hive.sh 2026-04-08
-#
-# 说明:
-#   1. 这是星型模型扩展链路，不替代 run_all_hive.sh 主链路。
-#   2. 执行前请先运行 run_all_hive.sh，确保 ODS / DWD 主链路已完成。
-#   3. 本脚本基于 DWD 构建 dim_user / dim_product / dim_date / dim_geo / fact_order。
-#   4. 星型模型客户价值汇总表建议使用 dws_customer_value_star_hive，
-#      避免与主链路 dws_customer_value_hive 表名和结构冲突。
+#   bash run_star_schema_hive.sh 2026-04-08
 # =====================================================
 
-BIZDATE=$1
+BIZDATE="${1:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [ -z "$BIZDATE" ]; then
-  echo "ERROR: bizdate is required."
-  echo "Usage: sh run_star_schema_hive.sh 2026-04-08"
-  exit 1
+if [ -z "${BIZDATE}" ]; then
+    echo "ERROR: bizdate is required."
+    echo "Usage: bash run_star_schema_hive.sh YYYY-MM-DD"
+    exit 1
 fi
 
-if ! date -d "$BIZDATE" +%F >/dev/null 2>&1; then
-  echo "ERROR: invalid bizdate: $BIZDATE"
-  echo "Usage: sh run_star_schema_hive.sh 2026-04-08"
-  exit 1
+if ! date -d "${BIZDATE}" +%F >/dev/null 2>&1; then
+    echo "ERROR: invalid bizdate: ${BIZDATE}"
+    exit 1
 fi
 
-BIZDATE="$(date -d "$BIZDATE" +%F)"
+BIZDATE="$(date -d "${BIZDATE}" +%F)"
 
 run_hive_sql() {
-  STEP_NAME=$1
-  SQL_FILE=$2
+    local step_name="$1"
+    local sql_file="$2"
+    local sql_path="${BASE_DIR}/${sql_file}"
 
-  echo "========================================"
-  echo "$STEP_NAME"
-  echo "SQL: $SQL_FILE"
-  echo "bizdate: ${BIZDATE}"
-  echo "========================================"
+    if [ ! -f "${sql_path}" ]; then
+        echo "ERROR: SQL file not found: ${sql_path}"
+        exit 1
+    fi
 
-  if [ ! -f "$SQL_FILE" ]; then
-    echo "ERROR: SQL file not found: $SQL_FILE"
-    exit 1
-  fi
+    echo
+    echo "========================================"
+    echo "${step_name}"
+    echo "SQL: ${sql_file}"
+    echo "bizdate: ${BIZDATE}"
+    echo "========================================"
 
-  hive --hiveconf bizdate="${BIZDATE}" -f "$SQL_FILE"
-
-  if [ $? -ne 0 ]; then
-    echo "ERROR: failed at $STEP_NAME"
-    echo "ERROR SQL: $SQL_FILE"
-    exit 1
-  fi
+    if ! hive \
+        --hiveconf bizdate="${BIZDATE}" \
+        -f "${sql_path}"; then
+        echo "ERROR: ${step_name} failed."
+        echo "ERROR SQL: ${sql_path}"
+        exit 1
+    fi
 }
 
 echo "========================================"
-echo "Start Hive star schema extension job"
+echo "Start star schema pipeline"
 echo "bizdate: ${BIZDATE}"
-echo "base_dir: ${BASE_DIR}"
 echo "========================================"
 
-run_hive_sql "[01/12] Create user dimension" \
-  "$BASE_DIR/11_dim_user_scd2_hive.sql"
+run_hive_sql "[01/13] Create SCD2 user dimension" \
+    "11_dim_user_scd2_hive.sql"
 
-run_hive_sql "[02/12] Load user dimension snapshot" \
-  "$BASE_DIR/12_load_dim_user_scd2_hive.sql"
+run_hive_sql "[02/13] Load SCD2 user dimension partition" \
+    "12_load_dim_user_scd2_hive.sql"
 
-run_hive_sql "[03/12] Create product dimension" \
-  "$BASE_DIR/13_dim_product_hive.sql"
+run_hive_sql "[03/13] Create product dimension" \
+    "13_dim_product_hive.sql"
 
-run_hive_sql "[04/12] Load product dimension" \
-  "$BASE_DIR/14_load_dim_product_hive.sql"
+run_hive_sql "[04/13] Load product dimension partition" \
+    "14_load_dim_product_hive.sql"
 
-run_hive_sql "[05/12] Create date dimension" \
-  "$BASE_DIR/19_dim_date_hive.sql"
+run_hive_sql "[05/13] Create date dimension" \
+    "19_dim_date_hive.sql"
 
-run_hive_sql "[06/12] Load date dimension" \
-  "$BASE_DIR/22_load_dim_date_hive.sql"
+run_hive_sql "[06/13] Load date dimension partition" \
+    "22_load_dim_date_hive.sql"
 
-run_hive_sql "[07/12] Create geo dimension" \
-  "$BASE_DIR/20_dim_geo_hive.sql"
+run_hive_sql "[07/13] Create geography dimension" \
+    "20_dim_geo_hive.sql"
 
-run_hive_sql "[08/12] Load geo dimension" \
-  "$BASE_DIR/21_load_dim_geo_hive.sql"
+run_hive_sql "[08/13] Load geography dimension partition" \
+    "21_load_dim_geo_hive.sql"
 
-run_hive_sql "[09/12] Create fact order table" \
-  "$BASE_DIR/15_fact_order_hive.sql"
+run_hive_sql "[09/13] Create order fact table" \
+    "15_fact_order_hive.sql"
 
-run_hive_sql "[10/12] Load fact order partition" \
-  "$BASE_DIR/16_load_fact_order_hive.sql"
+run_hive_sql "[10/13] Load order fact partition" \
+    "16_load_fact_order_hive.sql"
 
-run_hive_sql "[11/12] Create star DWS customer value table" \
-  "$BASE_DIR/17_dws_customer_value_star_hive.sql"
+run_hive_sql "[11/13] Create star DWS customer value table" \
+    "17_dws_customer_value_star_hive.sql"
 
-run_hive_sql "[12/12] Load star DWS customer value partition" \
-  "$BASE_DIR/18_load_dws_customer_value_star_hive.sql"
+run_hive_sql "[12/13] Load star DWS customer value partition" \
+    "18_load_dws_customer_value_star_hive.sql"
 
+echo
 echo "========================================"
-echo "Hive star schema extension job finished successfully"
+echo "[13/13] Run star schema quality gate"
+echo "bizdate: ${BIZDATE}"
+echo "========================================"
+
+if [ ! -f "${BASE_DIR}/run_star_quality_gate_hive.sh" ]; then
+    echo "ERROR: quality gate script not found:"
+    echo "${BASE_DIR}/run_star_quality_gate_hive.sh"
+    exit 1
+fi
+
+if ! bash "${BASE_DIR}/run_star_quality_gate_hive.sh" "${BIZDATE}"; then
+    echo "ERROR: star schema pipeline blocked by quality gate."
+    exit 1
+fi
+
+echo
+echo "========================================"
+echo "Star schema pipeline completed successfully."
 echo "bizdate: ${BIZDATE}"
 echo "========================================"
