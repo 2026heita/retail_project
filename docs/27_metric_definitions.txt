@@ -1,41 +1,462 @@
-项目指标口径说明
+本文用于统一 MySQL、Hive、README、结果截图和面试材料中的指标定义，避免同一指标在不同文档中出现不同统计范围、分母或单位。
 
-一、文档目的
-本文档用于统一说明本项目中的核心指标定义、统计范围和结果解释边界，保证 README、SQL 脚本、Hive 迁移文档、调度文档和结果截图中的指标表达保持一致。
+除特别说明外，Hive 业务指标均基于指定 bizdate 对应的 DWD 有效订单明细统计。
 
-二、数据范围
-1. 数据来源：电商零售订单数据，围绕订单、客户、商品、国家等维度进行建模与分析。
-2. 统计范围：所有指标默认基于清洗后的有效订单数据统计，不包含异常订单和无效记录。
-3. 清洗规则：过滤商品数量小于等于 0、商品单价小于等于 0、CustomerID 为空或空字符串、Invoice 为空或以 C 开头的退货订单。
-4. 金额字段：amount = Quantity * Price，用于客户价值分层、销售贡献分析、国家销售汇总和商品偏好分析。
-5. 日期口径：Hive 阶段通过 bizdate 参数控制业务日期，各层结果表使用 dt 分区保存同一业务日期的数据。
+二、数据层使用边界
 
-三、Hive 阶段核心指标
-1. 总销售额：指定 dt 分区内清洗后有效订单明细 amount 之和。
-2. 总订单数：指定 dt 分区内清洗后去重订单编号数量。
-3. 总客户数：指定 dt 分区内清洗后去重客户编号数量。
-4. 客户价值分层：Hive 主链路按指定 dt 分区内客户消费金额划分 High Value、Medium Value、Low Value；该口径为业务日期分区口径，不代表历史累计消费。
-5. 高价值客户：客户价值分层结果中 customer_level = 'High Value' 的客户。
-6. 客户层级人数占比：某一客户层级人数占总客户数的比例。
-7. 客户层级销售贡献占比：某一客户层级销售额占总销售额的比例。
-8. 高价值客户销售贡献占比：高价值客户贡献销售额占平台总销售额的比例。
-9. 高价值客户订单数：高价值客户产生的去重订单数量。
-10. 高价值客户人均销售额：高价值客户总销售额除以高价值客户人数。
-11. 高价值客户人均订单数：高价值客户总订单数除以高价值客户人数。
-12. 国家销售汇总：按国家维度统计订单数、客户数、销售额和平均订单金额。
-13. 国家销售排行：基于国家销售汇总表，按 total_sales 降序生成 sales_rank。
-14. 高价值客户偏好商品：仅在高价值客户群体内统计商品的客户数、订单数、购买数量、销售额和销售额排名。
+1. Hive 源表 retail
+   保存导入后的源订单数据，不直接作为最终业务指标来源。
 
-四、MySQL 阶段扩展指标
-MySQL 阶段还包含复购率、月度销售趋势、Top 客户收入集中度、商品销售集中度、客户下单频次等扩展指标。这些指标用于展示原 MySQL 分析链路，Hive 阶段优先迁移客户价值、国家销售和高价值客户偏好相关核心指标。
+2. ODS Raw
+   表名：ods_retail_raw_hive
+   用于原始字段保真和入仓对账，不直接用于业务指标统计。
 
-五、客户价值分层规则
-High Value：total_spent >= 5000
-Medium Value：1000 <= total_spent < 5000
-Low Value：total_spent < 1000
+3. ODS Reject
+   表名：ods_retail_reject_hive
+   用于保存日期为空或日期解析失败的记录，不计入业务指标。
 
-六、结果解释边界
-1. 本项目所有指标均基于当前数据集统计，不等同于真实业务运营指标。
-2. 本项目不将分析结果表述为实际业务优化收益。
-3. 项目结果主要用于展示离线数仓建模、指标开发、Hive 迁移、调度编排和结果校验能力。
-4. 结果截图中的日期为演示业务日期，用于展示分区重跑和调度验收效果。
+4. 正常 ODS
+   表名：ods_retail_hive
+   保存日期可以解析且属于当前业务日期的数据，仍可能包含无效数量、无效价格、空客户或取消订单。
+
+5. DWD
+   表名：dwd_retail_clean_hive
+   是 Hive 业务指标的统一明细来源。
+
+6. 星型事实表
+   表名：fact_order
+   基于 DWD 构建。星型模型指标应与 DWD 主链路保持相同业务口径，不形成另一套指标定义。
+
+三、DWD 有效订单范围
+
+DWD 只保留同时满足以下条件的记录：
+
+1. Quantity > 0；
+2. Price > 0；
+3. CustomerID 不为空且不是空字符串；
+4. Invoice 不为空且不是空字符串；
+5. Invoice 不以 C 开头；
+6. StockCode 不为空且不是空字符串；
+7. Country 不为空且不是空字符串；
+8. InvoiceDate 不为空且能够成功解析。
+
+DWD 金额字段：
+
+amount = ROUND(Quantity × Price, 2)
+
+存储类型：
+
+DECIMAL(12,2)
+
+取消或退货订单当前按以下条件识别：
+
+UPPER(TRIM(Invoice)) LIKE 'C%'
+
+四、日期口径
+
+1. bizdate
+   本次 ETL 处理的业务日期参数，格式为 yyyy-MM-dd。
+
+2. dt
+   正常 ODS、DWD、DWS、ADS、维表和事实表的业务日期分区。
+
+3. batch_dt
+   ODS Raw 和 ODS Reject 的处理批次日期。
+
+4. 指标统计范围
+   Hive 主链路中的客户价值、国家销售和 ADS 指标均按当前 dt 分区统计，不代表客户历史累计价值。
+
+5. 历史工程截图
+   历史多日截图使用的是工程模拟日期和较早数据基线，不能据此推断真实业务日趋势，也不能与当前 2026-04-08 回归值直接比较。
+
+五、Hive 核心基础指标
+
+1. 总销售额
+
+定义：
+
+指定 dt 分区内 DWD amount 之和。
+
+公式：
+
+total_sales = SUM(amount)
+
+2. 总订单数
+
+定义：
+
+指定 dt 分区内去重后的订单编号数量。
+
+公式：
+
+total_orders = COUNT(DISTINCT invoice)
+
+3. 总客户数
+
+定义：
+
+指定 dt 分区内去重后的客户编号数量。
+
+公式：
+
+total_customers = COUNT(DISTINCT customerid)
+
+4. 商品购买数量
+
+定义：
+
+指定统计范围内有效订单明细 Quantity 之和。
+
+公式：
+
+total_quantity = SUM(quantity)
+
+该指标表示购买件数，不表示订单数或客户数。
+
+六、客户价值指标
+
+来源表：
+
+dws_customer_value_hive
+
+统计粒度：
+
+每个 customerid 在当前 dt 分区一行。
+
+字段定义：
+
+1. order_count
+
+COUNT(DISTINCT invoice)
+
+表示该客户在当前业务日期内产生的去重订单数。
+
+2. total_spent
+
+SUM(amount)
+
+表示该客户在当前业务日期内的有效销售额。
+
+3. customer_level
+
+High Value：
+total_spent >= 5000
+
+Medium Value：
+1000 <= total_spent < 5000
+
+Low Value：
+total_spent < 1000
+
+该分层是当前业务日期分区口径，不是客户全生命周期累计价值。
+
+星型模型中的 dws_customer_value_star_hive 使用相同阈值，但按 user_id 基于 fact_order 聚合。
+
+七、客户层级分布指标
+
+来源表：
+
+ads_customer_level_distribution_hive
+
+1. customer_cnt
+
+某一 customer_level 下去重客户数量。
+
+2. total_spent
+
+某一 customer_level 下客户 total_spent 之和。
+
+3. customer_cnt_pct
+
+公式：
+
+customer_cnt_pct
+= 当前层级客户数 / 全部层级客户数 × 100
+
+保留 2 位小数，单位为百分比数值。
+
+例如：
+
+25.50 表示 25.50%，不是 0.255。
+
+4. sales_pct
+
+公式：
+
+sales_pct
+= 当前层级销售额 / 全部层级销售额 × 100
+
+保留 2 位小数，单位为百分比数值。
+
+由于各层比例分别四舍五入，最终相加可能与 100.00 存在极小误差。
+
+八、高价值客户销售贡献指标
+
+来源表：
+
+ads_high_value_customer_sales_contribution_hive
+
+高价值客户定义：
+
+dws_customer_value_hive 中 customer_level = 'High Value'
+
+1. high_value_customer_cnt
+
+高价值客户去重数量。
+
+公式：
+
+COUNT(DISTINCT customerid)
+
+2. high_value_order_cnt
+
+高价值客户产生的去重订单数量。
+
+公式：
+
+COUNT(DISTINCT invoice)
+
+3. high_value_total_sales
+
+高价值客户有效订单 amount 之和。
+
+无匹配记录时返回 0，而不是 NULL。
+
+4. total_sales
+
+当前 dt 分区全部 DWD 有效订单 amount 之和。
+
+无记录时返回 0。
+
+5. sales_contribution_pct
+
+公式：
+
+sales_contribution_pct
+= high_value_total_sales / total_sales × 100
+
+总销售额为 0 时返回 0，保留 2 位小数。
+
+6. avg_sales_per_customer
+
+公式：
+
+avg_sales_per_customer
+= high_value_total_sales / high_value_customer_cnt
+
+高价值客户数为 0 时返回 0，保留 2 位小数。
+
+7. avg_orders_per_customer
+
+公式：
+
+avg_orders_per_customer
+= high_value_order_cnt / high_value_customer_cnt
+
+高价值客户数为 0 时返回 0，保留 2 位小数。
+
+九、国家销售指标
+
+来源表：
+
+dws_sales_summary_hive
+
+统计粒度：
+
+每个 country 在当前 dt 分区一行。
+
+1. total_orders
+
+国家内去重订单数。
+
+公式：
+
+COUNT(DISTINCT invoice)
+
+实际 SQL 通过 country + invoice 先去重后计数。
+
+2. total_customers
+
+国家内去重客户数。
+
+公式：
+
+COUNT(DISTINCT customerid)
+
+实际 SQL 通过 country + customerid 先去重后计数。
+
+同一客户在不同国家出现时，会分别计入对应国家。
+
+3. total_sales
+
+国家内有效订单 amount 之和。
+
+4. avg_order_value
+
+公式：
+
+avg_order_value
+= total_sales / total_orders
+
+订单数为 0 时返回 0，结果保存为 DECIMAL(14,2)。
+
+该指标是平均每个去重订单的销售额，不是平均明细行金额，也不是人均消费。
+
+十、国家销售排行
+
+来源表：
+
+ads_country_sales_rank_hive
+
+排序指标：
+
+total_sales 降序
+
+排名函数：
+
+RANK()
+
+说明：
+
+1. 销售额相同的国家获得相同排名；
+2. 并列后可能出现跳号；
+3. 它不是 ROW_NUMBER()，因此不能保证每行排名连续且唯一。
+
+十一、高价值客户商品偏好
+
+来源表：
+
+ads_high_value_customer_preference_hive
+
+统计范围：
+
+仅 customer_level = 'High Value' 的客户。
+
+统计粒度：
+
+stockcode + description
+
+字段定义：
+
+1. high_value_customer_cnt
+   购买该商品的高价值客户去重数量。
+
+2. high_value_order_cnt
+   包含该商品的高价值客户去重订单数量。
+
+3. total_quantity
+   高价值客户购买该商品的有效数量之和。
+
+4. total_sales
+   高价值客户购买该商品产生的销售额之和。
+
+5. sales_rank
+   按 total_sales 降序使用 RANK() 排名。
+
+注意：
+
+同一 StockCode 存在不同 Description 时，当前 ADS 会按 StockCode 和 Description 分组，可能形成多行。商品主数据治理不属于本项目当前范围。
+
+十二、BI 导出指标
+
+文件：
+
+hive_sql/26_ads_bi_export_dataset.sql
+
+输出字段：
+
+dt
+metric_name
+metric_value
+
+当前包含：
+
+1. High Value Sales Contribution Pct
+   来源于 sales_contribution_pct。
+
+2. Total Customer Count
+   来源于客户层级分布表 customer_cnt 之和。
+
+3. Total Sales
+   来源于国家销售排行表 total_sales 之和。
+
+所有 metric_value 统一转换为 DECIMAL(18,2)，便于 UNION ALL 和 CSV/TSV 导出。
+
+该文件是可选查询，不参与 run_all_hive.sh 主链路。
+
+十三、星型模型口径
+
+1. fact_order
+
+粒度：
+
+一行有效订单商品明细。
+
+主要度量：
+
+quantity
+amount
+
+2. dws_customer_value_star_hive
+
+基于 fact_order 当前 dt 分区按 user_id 聚合：
+
+total_orders = COUNT(DISTINCT order_id)
+total_amount = SUM(amount)
+
+客户价值阈值与 dws_customer_value_hive 一致。
+
+3. 对账原则
+
+同一 dt 下应满足：
+
+DWD 行数 = fact_order 行数
+
+DWD 销售额 = fact_order 销售额
+
+主链路客户数和销售额应与星型客户价值汇总保持一致。
+
+允许金额对账存在不超过 0.01 的小数精度误差。
+
+十四、MySQL 阶段指标
+
+MySQL 阶段还包含：
+
+- 复购率；
+- 月度销售趋势；
+- 月度销售增长；
+- Top 客户收入集中度；
+- 商品销售集中度；
+- 客户下单频次；
+- 高价值客户国家分布；
+- 高价值客户订单频次。
+
+这些指标用于展示 MySQL 分析链路，具体定义以对应 MySQL SQL 文件为准。
+
+MySQL 与 Hive 的表属于不同系统，不能因为指标名称相同就默认结果完全一致。比较时应先确认：
+
+- 清洗条件；
+- 日期范围；
+- 去重字段；
+- 客户分层阈值；
+- 金额精度；
+- 空值处理。
+
+十五、百分比和金额展示规则
+
+1. 百分比字段存储的是 0 到 100 的数值。
+2. 展示时可追加百分号，但不得再次乘以 100。
+3. 金额默认保留 2 位小数。
+4. 订单数、客户数、商品数和购买数量使用整数。
+5. SQL 中已四舍五入的指标，展示层不应改变统计口径。
+6. 无业务记录时，已设置 COALESCE 的指标返回 0；未设置兜底的明细结果可能为空表。
+
+十六、结果解释边界
+
+1. 所有结果基于当前项目数据集，不等同于真实企业经营指标。
+2. 演示日期主要用于分区、重跑和调度验收。
+3. 不将高价值客户贡献率等结果描述为实际经营改善收益。
+4. ODS Raw 和 Reject 的数量属于技术质量指标，不属于销售业务指标。
+5. 历史截图和当前回归属于不同数据或规则基线，不能混合计算趋势。
+6. 轻量 BI Dashboard 目前只有截图，仓库中没有对应生成脚本。
+7. 文档、截图和面试材料引用指标时，应同时写明统计日期和数据层。

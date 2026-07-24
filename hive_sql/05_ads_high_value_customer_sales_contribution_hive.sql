@@ -54,7 +54,10 @@ FROM (
     SELECT /*+ MAPJOIN(cv) */
         COUNT(DISTINCT cv.customerid) AS high_value_customer_cnt,
         COUNT(DISTINCT d.invoice) AS high_value_order_cnt,
-        CAST(SUM(d.amount) AS DECIMAL(14,2)) AS high_value_total_sales
+        COALESCE(
+            CAST(SUM(d.amount) AS DECIMAL(14,2)),
+            CAST(0 AS DECIMAL(14,2))
+        ) AS high_value_total_sales
     FROM dwd_retail_clean_hive d
     JOIN dws_customer_value_hive cv
         ON d.customerid = cv.customerid
@@ -64,8 +67,11 @@ FROM (
 ) h
 JOIN (
     SELECT
-        CAST(SUM(amount) AS DECIMAL(14,2)) AS total_sales
-    FROM dwd_retail_clean_hive
-    WHERE dt = '${hiveconf:bizdate}'
+    COALESCE(
+        CAST(SUM(amount) AS DECIMAL(14,2)),
+        CAST(0 AS DECIMAL(14,2))
+    ) AS total_sales
+FROM dwd_retail_clean_hive
+WHERE dt = '${hiveconf:bizdate}'
 ) t
 ON 1=1;

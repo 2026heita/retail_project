@@ -1,154 +1,152 @@
-# DolphinScheduler 调度设计说明
+# DolphinScheduler 工作流设计说明
+
+> 文件属性：长期保留，提交代码仓库
+> 对应文件：`dolphinscheduler/workflow_design.md`
+> 适用范围：当前仓库中的 DolphinScheduler 12 节点演示工作流
+
+---
 
 ## 1. 接入目的
 
-原项目已经具备 MySQL / Hive SQL 脚本、统一执行脚本和数据质量校验脚本。接入 DolphinScheduler 后，将 Hive 离线数仓链路拆分为可视化 DAG 任务节点，实现：
+Hive 数仓已经具备 SQL、Shell 主脚本和质量门禁。接入 DolphinScheduler 的主要目的不是替代 SQL，而是把任务依赖和运行状态显式化：
 
-- 按业务日期统一调度；
-- 节点依赖编排与失败阻断；
-- 工作流、任务实例和日志留痕；
-- DWD 进入 DWS 前的数据质量门禁；
-- ADS 结果层的最终检查；
-- 为后续补数、告警、重试和完整星型链路编排提供扩展基础。
+- 统一传递业务日期；
+- 展示 ODS、DWD、DWS、ADS 的上下游关系；
+- 在 DWD 质量失败时阻断下游；
+- 并行执行可以独立运行的主题任务；
+- 保存工作流实例、任务实例和运行日志；
+- 支持失败节点修复后的重跑；
+- 为后续加入结果门禁、星型模型、告警和补数工作流提供基础。
 
-本项目当前同时保留两种执行方式：
+当前项目同时保留两种执行方式：
 
-1. DolphinScheduler 12 节点演示 DAG，用于展示可视化任务编排和 DWD 质量门禁；
-2. `run_all_hive.sh` 15 步完整 Shell 主链路，用于执行 DWD、DWS/ADS、星型模型三级质量门禁。
+```text
+完整执行：
+hive_sql/run_all_hive.sh（当前 20 步主链路）
 
-两者职责不同，文档中不把当前 12 节点演示 DAG 描述成已经包含完整星型模型。
+调度展示：
+DolphinScheduler 12 节点演示 DAG
+```
 
-## 2. 当前实现方式
+二者不能描述为完全一致。
 
-本项目使用 DolphinScheduler 3.2.2 的 Shell 节点调度 Hive SQL。
+---
 
-DolphinScheduler 运行在 Docker 容器中，容器通过 SSH 调用部署 Hadoop / Hive 的 Linux 主机执行 Hive SQL，不在容器内直接安装 Hive 客户端。
+## 2. 部署架构
+
+当前设计使用 DolphinScheduler 3.2.2 的 Shell 节点，通过 SSH 调用 Hadoop/Hive 主机：
 
 ```text
 DolphinScheduler 3.2.2（Docker）
-  ├── 元数据库：MySQL 持久化
+  ├── MySQL 元数据库
   ├── MySQL Connector/J
   └── OpenSSH Client
-          ↓ SSH
+          │
+          │ SSH
+          ▼
 Hadoop / HDFS / Hive 主机
-          ↓
-ODS → DWD → DWD质量门禁 → DWS → ADS → 结果检查
+  └── ${PROJECT_HOME}/hive/
 ```
 
-完整 Shell 主链路为：
+采用 SSH 方式的原因：
+
+- DolphinScheduler 容器不必安装完整 Hive 客户端；
+- Hive 环境变量、配置文件和依赖继续由 Hadoop/Hive 主机维护；
+- 调度平台负责依赖、状态和日志，远程主机负责实际计算。
+
+公开仓库不保存真实主机、用户、密码或 SSH 私钥。
+
+---
+
+## 3. 工作流文件状态
+
+导入文件：
 
 ```text
-ODS → DWD → DWD质量门禁
-    → DWS / ADS → 结果质量门禁
-    → 星型模型 → 星型质量门禁
-    → 结果展示
+retail_hive_offline_warehouse_daily_demo.json
 ```
 
-公开仓库不保留真实服务器账号、真实 IP、数据库密码或 SSH 私钥，统一使用 `${HIVE_USER}`、`${HIVE_HOST}`、`${PROJECT_HOME}` 等占位参数。
-
-## 3. 工作流名称
+当前 JSON 已核对：
 
 ```text
-retail_hive_offline_warehouse_daily
+任务节点数：12
+任务关系数：15
+发布状态：OFFLINE
+schedule：null
+任务类型：SHELL
+失败重试次数：0
+任务超时：关闭
 ```
 
-实际导入后，DolphinScheduler 可能在名称后自动追加导入时间戳，不影响工作流逻辑。
+JSON 中的流程名称带有导入时间后缀。它不影响 DAG 逻辑，导入后可在目标环境中调整显示名称。
+
+`schedule=null` 表示该公开模板不携带自动启用的定时计划。正确流程是：
+
+```text
+导入
+→ 修改环境参数
+→ 手动执行指定 bizdate
+→ 检查结果
+→ 再配置正式调度
+```
+
+---
 
 ## 4. 全局参数
 
-| 参数 | 示例值 | 说明 |
+当前模板统一使用：
+
+| 参数 | 模板值 | 说明 |
 |---|---|---|
-| `bizdate` | `$[yyyy-MM-dd-1]` | 默认执行前一业务日 |
+| `bizdate` | `$[yyyy-MM-dd-1]` | 默认处理调度日前一天 |
 | `HIVE_USER` | `your_hive_user` | Hive 主机 SSH 用户 |
 | `HIVE_HOST` | `your_hive_host` | Hive 主机地址 |
-| `PROJECT_HOME` | `/path/to/retail_hive_project` | 服务器项目根目录 |
+| `PROJECT_HOME` | `/home/your_user/retail_hive_project` | 远程项目根目录 |
 
-仓库中的 SQL 和脚本保存在：
+JSON 中以下三种参数表示已经保持一致：
 
 ```text
-hive_sql/
+globalParams
+globalParamList
+globalParamMap
 ```
 
-服务器实际运行目录为：
+任务命令从以下目录读取文件：
 
 ```text
 ${PROJECT_HOME}/hive/
 ```
 
-因此 DolphinScheduler 节点使用 `${PROJECT_HOME}/hive/*.sql` 和 `${PROJECT_HOME}/hive/*.sh`。
-
-## 5. 工作流分层设计
-
-当前 DolphinScheduler 演示 DAG：
+仓库目录名是：
 
 ```text
-ODS 建表与分区加载
-  → DWD 明细清洗
-  → DWD 数据质量门禁
-  → DWS 主题汇总
-  → ADS 应用指标
-  → 结果检查
+hive_sql/
 ```
 
-其中：
+部署时可以把它上传或同步为服务器上的 `hive/`，但实际路径必须与调度命令一致。
 
-- `dwd_quality_gate` 是硬门禁，BLOCK 规则失败时直接阻断 DWS 与 ADS；
-- `hive_data_quality_check` 位于流程末尾，执行结果展示与人工验收查询；
-- 当前导入 JSON 仍是 12 节点演示 DAG，没有直接展开 DWS/ADS 结果门禁和星型模型节点；
-- 完整三级门禁已在 `run_all_hive.sh` 中实现，后续可继续映射为 DolphinScheduler 节点。
+---
 
-## 6. 任务节点列表
+## 5. 当前 12 节点 DAG
 
-| 序号 | 节点名称 | 作用 | 执行文件 |
-|---:|---|---|---|
-| 1 | `ods_create_retail` | 创建/准备 ODS 分区表 | `00_ods_retail_hive.sql` |
-| 2 | `ods_load_retail` | 将源表数据写入 ODS 业务日期分区 | `00_load_ods_retail_hive.sql` |
-| 3 | `dwd_create_table` | 创建 DWD 清洗明细表 | `01_dwd_retail_clean_hive.sql` |
-| 4 | `dwd_load_clean_data` | 从 ODS 清洗并加载 DWD 分区 | `02_load_dwd_retail_clean_hive.sql` |
-| 5 | `dwd_quality_gate` | 写入质量日志并在 BLOCK 规则失败时阻断下游 | `run_quality_gate_hive.sh` |
-| 6 | `dws_customer_value` | 生成客户价值汇总 | `03_dws_customer_value_hive.sql` |
-| 7 | `dws_sales_summary` | 生成国家销售汇总 | `04_dws_sales_summary_hive.sql` |
-| 8 | `ads_high_value_customer_sales_contribution` | 高价值客户销售贡献分析 | `05_ads_high_value_customer_sales_contribution_hive.sql` |
-| 9 | `ads_customer_level_distribution` | 客户等级分布分析 | `06_ads_customer_level_distribution_hive.sql` |
-| 10 | `ads_country_sales_rank` | 国家销售排行分析 | `07_ads_country_sales_rank_hive.sql` |
-| 11 | `ads_high_value_customer_preference` | 高价值客户商品偏好分析 | `08_ads_high_value_customer_preference_hive.sql` |
-| 12 | `hive_data_quality_check` | 展示并检查 ODS / DWD / DWS / ADS 结果 | `09_check_hive_result.sql` |
+### 5.1 节点清单
 
-## 7. 调度执行方式
+| 序号 | 节点 | 执行文件 |
+|---:|---|---|
+| 1 | `ods_create_retail` | `00_ods_retail_hive.sql` |
+| 2 | `ods_load_retail` | `00_load_ods_retail_hive.sql` |
+| 3 | `dwd_create_table` | `01_dwd_retail_clean_hive.sql` |
+| 4 | `dwd_load_clean_data` | `02_load_dwd_retail_clean_hive.sql` |
+| 5 | `dwd_quality_gate` | `run_quality_gate_hive.sh` |
+| 6 | `dws_customer_value` | `03_dws_customer_value_hive.sql` |
+| 7 | `dws_sales_summary` | `04_dws_sales_summary_hive.sql` |
+| 8 | `ads_high_value_customer_sales_contribution` | `05_ads_high_value_customer_sales_contribution_hive.sql` |
+| 9 | `ads_customer_level_distribution` | `06_ads_customer_level_distribution_hive.sql` |
+| 10 | `ads_country_sales_rank` | `07_ads_country_sales_rank_hive.sql` |
+| 11 | `ads_high_value_customer_preference` | `08_ads_high_value_customer_preference_hive.sql` |
+| 12 | `hive_data_quality_check` | `09_check_hive_result.sql` |
 
-普通 Hive SQL 节点：
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} "
-source /etc/profile
-source ~/.bash_profile 2>/dev/null || true
-hive --hiveconf bizdate=${bizdate} -f ${PROJECT_HOME}/hive/SQL文件名
-"
-```
-
-DWD 质量门禁节点：
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} "
-source /etc/profile
-source ~/.bash_profile 2>/dev/null || true
-bash ${PROJECT_HOME}/hive/run_quality_gate_hive.sh ${bizdate}
-"
-```
-
-完整 Shell 主链路也可以作为单个 DolphinScheduler Shell 节点调用：
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${HIVE_USER}@${HIVE_HOST} "
-source /etc/profile
-source ~/.bash_profile 2>/dev/null || true
-bash ${PROJECT_HOME}/hive/run_all_hive.sh ${bizdate}
-"
-```
-
-这种方式能直接复用已经验证过的 15 步主链路，但会降低 DolphinScheduler DAG 中的节点可视化粒度，因此当前仓库仍保留拆分节点的演示方案。
-
-## 8. DAG 依赖关系
+### 5.2 依赖关系
 
 ```text
 ods_create_retail
@@ -163,108 +161,328 @@ ods_create_retail
       └→ dws_sales_summary
            └→ ads_country_sales_rank
 
-ads_high_value_customer_sales_contribution
-ads_customer_level_distribution
-ads_high_value_customer_preference
-ads_country_sales_rank
+四个 ADS 节点
   → hive_data_quality_check
 ```
 
-## 9. 数据质量校验设计
+设计原则：
 
-### 9.1 DWD 质量门禁
+- ODS 和 DWD 严格串行；
+- DWD 门禁通过后才启动主题层；
+- 两张 DWS 可以并行；
+- 同一 DWS 下的 ADS 可以并行；
+- 四张 ADS 全部成功后执行最终检查。
 
-`dwd_quality_gate` 调用 `run_quality_gate_hive.sh`，依次执行：
+---
 
-1. `23_quality_log_hive.sql`：创建质量日志表；
-2. `24_load_quality_log_hive.sql`：写入指定 `bizdate` 的检查结果；
-3. 查询 `quality_log_hive` 中 `check_status='FAIL'` 且 `check_level='BLOCK'` 的记录数；
-4. 当 `failed_count > 0` 或结果无法读取时返回非零状态；
-5. 只有 `failed_count=0` 时允许继续执行 DWS 和 ADS。
+## 6. Shell 节点执行方式
 
-当前 DWD 门禁包括无效数量、无效价格、空客户、DWD 分区非空、ODS 与 DWD 行数对账和时间格式检查。
+普通 Hive SQL 节点使用：
 
-### 9.2 演示 DAG 结果检查
+```bash
+ssh \
+  -o StrictHostKeyChecking=accept-new \
+  -o BatchMode=yes \
+  ${HIVE_USER}@${HIVE_HOST} "
+source /etc/profile
+source ~/.bash_profile 2>/dev/null || true
+hive \
+  --hiveconf bizdate=${bizdate} \
+  -f ${PROJECT_HOME}/hive/SQL文件名
+"
+```
 
-`hive_data_quality_check` 执行 `09_check_hive_result.sql`，用于展示和人工核对：
+DWD 门禁节点使用：
 
-- ODS / DWD / DWS / ADS 各层分区行数；
-- DWD 清洗质量；
-- DWS 客户分层边界；
-- ADS 指标范围与排行字段。
+```bash
+ssh \
+  -o StrictHostKeyChecking=accept-new \
+  -o BatchMode=yes \
+  ${HIVE_USER}@${HIVE_HOST} "
+source /etc/profile
+source ~/.bash_profile 2>/dev/null || true
+bash ${PROJECT_HOME}/hive/run_quality_gate_hive.sh ${bizdate}
+"
+```
 
-该节点当前是查询式结果检查，不是依靠质量日志表和非零退出码实现的硬门禁。
+关键要求：
 
-### 9.3 完整 Shell 主链路质量门禁
+- SSH 必须使用密钥认证；
+- `BatchMode=yes` 防止任务等待交互式密码；
+- 远程 Shell 或 Hive 返回非零状态时，DolphinScheduler 节点应失败；
+- Hive 环境变量应由远程主机负责加载。
 
-`run_all_hive.sh` 中已经实现三级质量门禁：
+---
 
-1. `run_quality_gate_hive.sh`：DWD 前置门禁；
-2. `run_result_quality_gate_hive.sh`：DWS / ADS 后置门禁；
-3. `run_star_quality_gate_hive.sh`：星型模型门禁，由 `run_star_schema_hive.sh` 自动调用。
+## 7. 数据质量设计
 
-三类门禁都区分 BLOCK 和 WARN。BLOCK 失败时返回非零退出码并停止下游任务，WARN 只记录不阻断。
+### 7.1 DWD 质量门禁
 
-当前 DolphinScheduler 演示 JSON 只直接展开了第一层 DWD 门禁。完整三级门禁的真实实现以 Shell 主链路为准。
+`dwd_quality_gate` 调用：
 
-## 10. DolphinScheduler 元数据库持久化
+```text
+run_quality_gate_hive.sh
+```
 
-Standalone 默认 H2 内存数据库不适合长期保存项目元数据。本项目已将 DolphinScheduler 元数据库迁移到 MySQL，并通过自定义镜像加入：
+内部流程：
 
-- `mysql-connector-j-8.0.33.jar`；
-- `openssh-client`。
+```text
+创建质量日志表
+→ 写入当前 bizdate 的 DWD 检查结果
+→ 查询 BLOCK + FAIL 数量
+→ failed_count > 0 时返回非零状态
+```
 
-迁移后，项目、工作流定义、任务关系、工作流实例和任务实例可在容器重启后继续保留。
+当前包括 6 条 DWD BLOCK 规则：
 
-## 11. 工作流 JSON 说明
+- 无效数量；
+- 无效价格；
+- 空客户；
+- DWD 分区非空；
+- ODS 理论有效量与 DWD 实际量对账；
+- DWD 时间格式检查。
 
-`retail_hive_offline_warehouse_daily_demo.json` 使用 DolphinScheduler 3.2.2 原生导出结构作为基础，必须包含：
+这是当前 12 节点 DAG 中真正控制下游是否继续执行的硬门禁。
 
-- 非空的 `processTaskRelationList`；
-- 合法的数值型 `preTaskCode`、`postTaskCode`；
-- 首节点根关系（`preTaskCode = 0`）；
-- 与任务关系编码一致的 `taskDefinitionList`。
+### 7.2 最终结果检查
 
-该 JSON 对应当前 12 节点演示 DAG，不代表完整 15 步 Shell 主链路已经全部拆分成 DolphinScheduler 节点。
+`hive_data_quality_check` 执行：
 
-不同项目和不同环境的项目编码可能不同。跨环境迁移时，建议先在目标环境创建一个最小工作流并原生导出，再以该文件为模板调整。
+```text
+09_check_hive_result.sql
+```
 
-## 12. 验收结果
+它主要输出：
 
-当前 DolphinScheduler 演示工作流已完成真实运行验收：
+- ODS、DWD、DWS、ADS 分区数量；
+- DWD 清洗结果；
+- 客户分层；
+- ADS 指标范围和排名结果。
 
-- 12 个任务节点全部执行成功；
-- DWD 质量门禁输出 `Data quality gate passed.`；
-- `failed_count=0`；
-- 工作流实例与任务实例正常落入 MySQL 元数据库；
-- DolphinScheduler 容器重启后工作流和实例记录仍可保留。
+该 SQL 主要用于查询展示和人工验收，没有形成与 `run_result_quality_gate_hive.sh` 等价的完整阻断逻辑。因此不能把它描述为最新 DWS/ADS 结果门禁。
 
-完整 Shell 主链路另外完成了以下验收：
+---
 
-- `run_all_hive.sh` 已接入 DWD、DWS/ADS 和星型模型三级质量门禁；
-- 星型模型 12 条质量规则在 `2026-04-08` 全部 PASS；
-- 空业务日期测试能够返回非零退出码并阻断任务。
+## 8. 与最新 Hive 代码的兼容性边界
 
-验收截图：
+这是当前文档中最重要的边界。
 
-- `docs/result_screenshots/01_ds_workflow_instance_success.png`
-- `docs/result_screenshots/02_ds_dag_quality_gate_success.png`
-- `docs/result_screenshots/03_dwd_quality_gate_passed.png`
+最新仓库中的：
 
-## 13. GitHub 安全说明
+```text
+00_load_ods_retail_hive.sql
+```
 
-公开仓库不得提交：
+已经改为从：
 
-- 真实服务器 IP 和 SSH 用户；
-- MySQL 明文密码；
-- 实际 `application.yaml` 私密配置；
-- SSH 私钥或 `.ssh` 目录；
-- 内网完整访问地址。
+```text
+ods_retail_raw_hive
+```
 
-## 14. 后续优化方向
+读取数据。
 
-1. 将 DWS/ADS 结果门禁和星型模型链路继续拆分为 DolphinScheduler 可视化节点；
-2. 增加任务失败告警和通知策略；
-3. 增加自动重试和超时策略；
-4. 增加历史分区补数工作流；
-5. 增加 DolphinScheduler 集群化部署和 Worker 分组。
+但当前 12 节点 DAG 没有以下前置节点：
+
+```text
+创建 ODS Raw
+加载 ODS Raw
+创建 ODS Reject
+加载 ODS Reject
+ODS 入仓完整性门禁
+```
+
+因此，当前 JSON 与最新 ODS SQL **不是一套完整自包含的运行组合**。
+
+过去的 12 节点成功截图证明的是当时部署版本的调度链路已经运行成功；它不能证明把当前仓库全部最新 SQL 直接覆盖到旧服务器后仍能原样运行。
+
+安全处理方式只有两种：
+
+### 方式一：升级 DAG
+
+在 `ods_load_retail` 之前增加：
+
+```text
+ods_raw_create
+→ ods_raw_load
+→ ods_reject_create
+→ ods_reject_load
+→ ods_normal_create
+→ ods_normal_load
+→ ods_ingestion_gate
+```
+
+然后继续执行 DWD。
+
+### 方式二：单节点调用完整主脚本
+
+由一个 Shell 节点执行：
+
+```bash
+bash ${PROJECT_HOME}/hive/run_all_hive.sh ${bizdate}
+```
+
+优点是直接复用已验证的 20 步链路；缺点是 DolphinScheduler 页面无法看到每个内部步骤的独立节点状态。
+
+在新 DAG 完成并验收之前，不应宣称当前 JSON 已完整覆盖最新代码。
+
+---
+
+## 9. 当前未进入 DAG 的能力
+
+最新 `run_all_hive.sh` 已包含，但当前 JSON 未拆分的能力：
+
+- ODS Raw；
+- ODS Reject；
+- ODS 入仓完整性门禁；
+- ODS 内容检查；
+- DWS/ADS 结果门禁；
+- `dim_user`、`dim_product`、`dim_date`、`dim_geo`；
+- `fact_order`；
+- 星型客户价值 DWS；
+- 星型模型门禁；
+- 最终完整结果展示。
+
+统一口径：
+
+```text
+最完整实现：20 步 Shell 主链路
+调度演示：12 节点 DolphinScheduler DAG
+```
+
+---
+
+## 10. JSON 导入注意事项
+
+DolphinScheduler 3.2.2 导入文件需要保持：
+
+- `taskDefinitionList` 中任务编码合法；
+- `processTaskRelationList` 存在且非空；
+- 首节点具有 `preTaskCode=0` 的根关系；
+- 所有 `postTaskCode` 都能匹配任务定义；
+- 上下游关系不能随意删除；
+- 参数值不能残留真实服务器信息。
+
+建议验证：
+
+```powershell
+python -c "import json,pathlib; p=pathlib.Path(r'.\dolphinscheduler\retail_hive_offline_warehouse_daily_demo.json'); json.loads(p.read_text(encoding='utf-8-sig')); print('JSON format OK')"
+```
+
+语法通过只代表 JSON 格式正确，不代表：
+
+- 远程主机可连接；
+- SQL 文件存在；
+- DAG 与最新代码兼容；
+- 业务结果正确。
+
+导入后仍需手动执行验收。
+
+---
+
+## 11. 失败处理与重跑
+
+当前任务配置：
+
+```text
+failRetryTimes = 0
+timeoutFlag = CLOSE
+```
+
+这意味着节点失败后不会自动重试，也没有任务级超时。
+
+当前阶段保留该配置的原因：
+
+- SQL 逻辑错误不应盲目重试；
+- SSH、Hive 环境和数据质量失败需要先判断原因；
+- 学习项目优先保持行为清晰。
+
+重跑原则：
+
+1. SSH 或临时资源故障：修复后重跑失败节点及下游；
+2. SQL 逻辑错误：修复代码后使用同一 `bizdate` 重跑；
+3. DWD 门禁失败：修复上游数据或规则后，从对应上游节点重跑；
+4. 历史 SCD2 日期修正：不能只重跑单个中间日期，应升序回刷后续日期；
+5. `INSERT OVERWRITE` 可以防止同一分区不断追加，但完整幂等性仍应由指纹脚本验证。
+
+后续增加自动重试和超时时，应区分：
+
+```text
+可重试的基础设施故障
+不可盲目重试的 SQL 或质量故障
+```
+
+---
+
+## 12. 已有验收证据
+
+仓库中保留的截图包括：
+
+```text
+docs/result_screenshots/01_ds_workflow_instance_success.png
+docs/result_screenshots/02_ds_dag_quality_gate_success.png
+docs/result_screenshots/03_dwd_quality_gate_passed.png
+```
+
+这些截图证明：
+
+- 当时的 12 节点工作流实例执行成功；
+- DAG 依赖关系可以正常运行；
+- DWD 质量门禁输出通过；
+- DolphinScheduler 任务和实例可以保留在 MySQL 元数据库中。
+
+它们属于历史调度验收证据，不等同于最新 20 步 Shell 链路的完整调度验收。
+
+---
+
+## 13. 部署检查清单
+
+导入和运行前检查：
+
+```text
+1. DolphinScheduler 元数据库使用 MySQL，而不是临时 H2。
+2. 容器中存在 MySQL Connector/J。
+3. Worker 容器中存在 ssh 客户端。
+4. Worker 到 Hive 主机的 SSH 密钥认证正常。
+5. HIVE_USER、HIVE_HOST、PROJECT_HOME 已替换为目标环境值。
+6. ${PROJECT_HOME}/hive/ 下存在任务引用的文件。
+7. Shell 文件具有执行权限。
+8. 目标 Hive 源表和依赖表存在。
+9. 当前使用的 DAG 与部署 SQL 版本一致。
+10. 先用固定 bizdate 手动运行。
+11. 检查 DWD 门禁失败数和各层结果。
+12. 验收成功后再创建定时计划。
+```
+
+---
+
+## 14. 后续升级顺序
+
+建议按以下顺序升级调度：
+
+1. 增加 ODS Raw 和 Reject 节点；
+2. 增加 ODS 入仓完整性门禁；
+3. 验证新 ODS 链路的成功和失败路径；
+4. 增加 DWS/ADS 结果门禁；
+5. 增加四张维表和事实表；
+6. 增加星型 DWS 和星型门禁；
+7. 增加任务超时、基础设施重试和告警；
+8. 增加历史区间回刷专用工作流；
+9. 全链路验收后重新导出公开模板 JSON。
+
+---
+
+## 15. 总结
+
+当前 DolphinScheduler 设计已经展示了：
+
+- Shell 节点通过 SSH 执行 Hive；
+- 12 节点 DAG 依赖；
+- DWD 质量失败阻断；
+- DWS 和 ADS 并行；
+- MySQL 元数据库持久化；
+- 环境参数占位化；
+- 调度实例和运行日志留痕。
+
+同时需要明确：
+
+> 当前 JSON 是历史已验收的 12 节点演示 DAG，最新仓库中的完整实现是 20 步 Shell 主链路。由于正常 ODS 已改为从 ODS Raw 读取，旧 DAG 不能在未补充 Raw 前置任务的情况下直接套用最新 SQL。

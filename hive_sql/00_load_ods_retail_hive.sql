@@ -1,37 +1,53 @@
 -- =====================================================
 -- 文件名: 00_load_ods_retail_hive.sql
--- 功能: 将原始 retail 表数据加载到 ODS 分区表
+-- 功能: 从 ODS Raw 原始落地表加载指定业务日期的数据
 -- 说明:
---   1. 兼容两种源时间格式:
---      yyyy-MM-dd HH:mm:ss，例如 2026-04-08 07:45:00
---      d/M/yyyy HH:mm:ss，例如 8/4/2026 07:45:00
---   2. ODS 保留原始 InvoiceDate 字符串，不在 ODS 层改写源值
---   3. 根据解析后的业务日期写入指定 dt 分区
---   4. 使用 INSERT OVERWRITE 保证同一天可重复执行
+--   1. 不再直接读取源表 retail
+--   2. 数据统一从 ods_retail_raw_hive 进入正常 ODS 链路
+--   3. 日期解析兼容 yyyy-MM-dd HH:mm:ss 和 d/M/yyyy HH:mm:ss
+--   4. 日期为空或解析失败的数据不会进入正常 ODS
+--   5. 异常日期数据由 ods_retail_reject_hive 保存
+--   6. 使用 INSERT OVERWRITE 保证同一业务日期重复执行结果一致
 -- =====================================================
+
+WITH parsed_source AS (
+    SELECT
+        invoice,
+        stockcode,
+        description,
+        quantity,
+        invoicedate,
+        price,
+        customerid,
+        country,
+        COALESCE(
+            UNIX_TIMESTAMP(
+                TRIM(invoicedate),
+                'yyyy-MM-dd HH:mm:ss'
+            ),
+            UNIX_TIMESTAMP(
+                TRIM(invoicedate),
+                'd/M/yyyy HH:mm:ss'
+            )
+        ) AS invoice_timestamp
+    FROM ods_retail_raw_hive
+    WHERE batch_dt = '${hiveconf:bizdate}'
+)
 
 INSERT OVERWRITE TABLE ods_retail_hive
 PARTITION (dt = '${hiveconf:bizdate}')
 SELECT
-    CAST(Invoice AS STRING) AS invoice,
-    CAST(StockCode AS STRING) AS stockcode,
-    CAST(Description AS STRING) AS description,
-    CAST(Quantity AS BIGINT) AS quantity,
-    CAST(InvoiceDate AS STRING) AS invoicedate,
-    CAST(Price AS DECIMAL(10,2)) AS price,
-    TRIM(CAST(CustomerID AS STRING)) AS customerid,
-    CAST(Country AS STRING) AS country
-FROM retail
-WHERE FROM_UNIXTIME(
-          COALESCE(
-              UNIX_TIMESTAMP(
-                  TRIM(CAST(InvoiceDate AS STRING)),
-                  'yyyy-MM-dd HH:mm:ss'
-              ),
-              UNIX_TIMESTAMP(
-                  TRIM(CAST(InvoiceDate AS STRING)),
-                  'd/M/yyyy HH:mm:ss'
-              )
-          ),
+    CAST(invoice AS STRING) AS invoice,
+    CAST(stockcode AS STRING) AS stockcode,
+    CAST(description AS STRING) AS description,
+    CAST(quantity AS BIGINT) AS quantity,
+    CAST(invoicedate AS STRING) AS invoicedate,
+    CAST(price AS DECIMAL(10,2)) AS price,
+    TRIM(CAST(customerid AS STRING)) AS customerid,
+    CAST(country AS STRING) AS country
+FROM parsed_source
+WHERE invoice_timestamp IS NOT NULL
+  AND FROM_UNIXTIME(
+          invoice_timestamp,
           'yyyy-MM-dd'
       ) = '${hiveconf:bizdate}';

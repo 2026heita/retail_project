@@ -1,40 +1,237 @@
-调度设计说明
+DolphinScheduler 调度设计说明
 
-一、补充目的
-原项目已经具备 Hive SQL 脚本、统一执行脚本、任务日志表和数据质量校验脚本。接入 DolphinScheduler 后，将 Hive 离线数仓链路从“脚本顺序执行”扩展为“可视化 DAG 任务流”，用于展示任务拆分、依赖编排、业务日期参数化、运行状态追踪和结果验收能力。
+文件属性：长期保留，提交代码仓库
+对应文件：docs/25_scheduler_design.txt
+适用范围：当前仓库中的 12 节点 DolphinScheduler 演示 DAG
 
-二、任务链路设计
-1. ODS 建表任务：创建或准备正式 ODS 分区表 ods_retail_hive。
-2. ODS 加载任务：将 retail 源表中指定 bizdate 的数据写入 ods_retail_hive 对应 dt 分区。
-3. DWD 建表与加载任务：创建清洗明细表，并过滤异常数量、异常价格、空客户和退货订单。
-4. DWS 汇总任务：生成客户价值分层表和国家销售汇总表。
-5. ADS 指标任务：生成高价值客户销售贡献、客户分层分布、国家销售排行、高价值客户商品偏好等指标表。
-6. 数据质量校验任务：检查各层分区是否有数据、清洗结果是否存在异常、客户分层边界是否正确、ADS 指标是否处于合理范围。
+一、文档目的
 
-三、任务节点列表
-1. ods_create_retail：执行 00_ods_retail_hive.sql，创建或准备 ODS 分区表。
-2. ods_load_retail：执行 00_load_ods_retail_hive.sql，将 retail 源表写入 ods_retail_hive 分区。
-3. dwd_create_table：执行 01_dwd_retail_clean_hive.sql，创建 DWD 清洗明细表。
-4. dwd_load_clean_data：执行 02_load_dwd_retail_clean_hive.sql，生成 DWD 清洗数据。
-5. dws_customer_value：执行 03_dws_customer_value_hive.sql，生成客户价值分层。
-6. dws_sales_summary：执行 04_dws_sales_summary_hive.sql，生成国家销售汇总。
-7. ads_high_value_customer_sales_contribution：执行 05_ads_high_value_customer_sales_contribution_hive.sql。
-8. ads_customer_level_distribution：执行 06_ads_customer_level_distribution_hive.sql。
-9. ads_country_sales_rank：执行 07_ads_country_sales_rank_hive.sql。
-10. ads_high_value_customer_preference：执行 08_ads_high_value_customer_preference_hive.sql。
-11. hive_data_quality_check：执行 09_check_hive_result.sql，完成结果校验。
+本项目已经具备 Hive SQL、Shell 主脚本、质量门禁和结果校验。接入 DolphinScheduler 后，将原来的顺序脚本执行拆分为可视化 DAG，用于展示：
 
-四、任务依赖关系
-ods_create_retail
+1. 任务拆分和上下游依赖；
+2. 业务日期参数化；
+3. DWD 质量失败阻断；
+4. DWS 与 ADS 并行执行；
+5. 工作流实例状态追踪；
+6. 失败节点修复后的重跑能力；
+7. 环境参数与真实服务器信息解耦。
+
+需要特别说明：
+
+当前最完整的 Hive 执行链路是 hive_sql/run_all_hive.sh，共 20 步。
+当前 DolphinScheduler JSON 是已经验收的较早 12 节点演示 DAG，两者并不完全一致。
+
+二、当前工作流文件
+
+导入文件：
+
+dolphinscheduler/retail_hive_offline_warehouse_daily_demo.json
+
+当前状态：
+
+1. JSON 已通过 Python 标准 JSON 解析；
+2. 包含 12 个任务节点；
+3. 包含 15 条任务依赖关系；
+4. 工作流发布状态为 OFFLINE；
+5. schedule 为 null，导入后不会自动创建并启用定时计划；
+6. 导入后需要先修改目标环境参数，再手动运行验证；
+7. 手动验证成功后，再按目标环境时区和业务窗口配置调度周期。
+
+三、全局参数
+
+当前导入模板统一使用以下参数：
+
+bizdate=$[yyyy-MM-dd-1]
+HIVE_USER=your_hive_user
+HIVE_HOST=your_hive_host
+PROJECT_HOME=/home/your_user/retail_hive_project
+
+参数说明：
+
+1. bizdate
+   表示本次处理的业务日期。
+   默认值 $[yyyy-MM-dd-1] 表示调度日期的前一天。
+
+2. HIVE_USER
+   Hive/Hadoop 主机的 SSH 用户名。
+   公开仓库中只保存占位值。
+
+3. HIVE_HOST
+   Hive/Hadoop 主机地址。
+   公开仓库中只保存占位值。
+
+4. PROJECT_HOME
+   服务器上的项目根目录。
+   当前任务命令从 ${PROJECT_HOME}/hive/ 读取 Hive SQL 和 Shell。
+
+仓库中的目录名是 hive_sql/，服务器部署时可以上传为 hive/，但任务命令必须与服务器真实目录一致。
+
+四、当前 12 个任务节点
+
+1. ods_create_retail
+
+执行文件：
+
+${PROJECT_HOME}/hive/00_ods_retail_hive.sql
+
+作用：
+
+创建或准备正常业务 ODS 表 ods_retail_hive。
+
+2. ods_load_retail
+
+执行文件：
+
+${PROJECT_HOME}/hive/00_load_ods_retail_hive.sql
+
+作用：
+
+加载指定 bizdate 的正常 ODS 分区。
+
+注意：
+
+当前仓库中的 00_load_ods_retail_hive.sql 已改为从 ODS Raw 读取，但本 12 节点 DAG 没有创建和加载 Raw、Reject 的前置节点。
+因此不应直接把最新 SQL 覆盖到旧调度环境后立即运行；必须先补充 Raw 和 Reject 前置任务，或者继续使用与该 DAG 同版本的部署脚本。
+
+3. dwd_create_table
+
+执行文件：
+
+${PROJECT_HOME}/hive/01_dwd_retail_clean_hive.sql
+
+作用：
+
+创建 DWD 清洗明细表。
+
+4. dwd_load_clean_data
+
+执行文件：
+
+${PROJECT_HOME}/hive/02_load_dwd_retail_clean_hive.sql
+
+作用：
+
+加载指定 bizdate 的 DWD 有效订单明细。
+
+5. dwd_quality_gate
+
+执行文件：
+
+${PROJECT_HOME}/hive/run_quality_gate_hive.sh
+
+作用：
+
+写入并读取 DWD 质量日志，检查 BLOCK 失败数量。
+
+阻断规则：
+
+- BLOCK 失败数量大于 0：脚本返回非零状态；
+- 无法读取质量结果：脚本返回非零状态；
+- 只有失败数量为 0 时，任务才成功。
+
+该节点是当前 DAG 中真正能够阻断下游 DWS 和 ADS 的质量门禁。
+
+6. dws_customer_value
+
+执行文件：
+
+${PROJECT_HOME}/hive/03_dws_customer_value_hive.sql
+
+作用：
+
+生成客户价值主题汇总和客户层级。
+
+7. dws_sales_summary
+
+执行文件：
+
+${PROJECT_HOME}/hive/04_dws_sales_summary_hive.sql
+
+作用：
+
+生成国家销售主题汇总。
+
+8. ads_high_value_customer_sales_contribution
+
+执行文件：
+
+${PROJECT_HOME}/hive/05_ads_high_value_customer_sales_contribution_hive.sql
+
+作用：
+
+生成高价值客户数量、订单和销售贡献指标。
+
+9. ads_customer_level_distribution
+
+执行文件：
+
+${PROJECT_HOME}/hive/06_ads_customer_level_distribution_hive.sql
+
+作用：
+
+生成各客户层级的客户数量和销售额分布。
+
+10. ads_country_sales_rank
+
+执行文件：
+
+${PROJECT_HOME}/hive/07_ads_country_sales_rank_hive.sql
+
+作用：
+
+生成国家销售排名。
+
+11. ads_high_value_customer_preference
+
+执行文件：
+
+${PROJECT_HOME}/hive/08_ads_high_value_customer_preference_hive.sql
+
+作用：
+
+生成高价值客户商品偏好排名。
+
+12. hive_data_quality_check
+
+执行文件：
+
+${PROJECT_HOME}/hive/09_check_hive_result.sql
+
+作用：
+
+输出 ODS、DWD、DWS、ADS 各层分区数量，以及 DWD 清洗、客户层级和 ADS 指标检查结果。
+
+重要边界：
+
+09_check_hive_result.sql 当前主要执行 SELECT 查询和展示结果，没有根据异常数量主动 ASSERT 或返回非零状态。
+因此该节点属于最终结果检查和验收报告，不应称为完整的 DWS/ADS 阻断门禁。
+
+当前完整 Shell 链路中的 DWS/ADS 阻断门禁由：
+
+run_result_quality_gate_hive.sh
+
+负责，但尚未加入本 12 节点 DAG。
+
+五、任务依赖关系
+
+当前实际依赖如下：
+
+START
+  -> ods_create_retail
   -> ods_load_retail
   -> dwd_create_table
   -> dwd_load_clean_data
-      -> dws_customer_value
-          -> ads_high_value_customer_sales_contribution
-          -> ads_customer_level_distribution
-          -> ads_high_value_customer_preference
-      -> dws_sales_summary
-          -> ads_country_sales_rank
+  -> dwd_quality_gate
+
+dwd_quality_gate
+  -> dws_customer_value
+      -> ads_high_value_customer_sales_contribution
+      -> ads_customer_level_distribution
+      -> ads_high_value_customer_preference
+
+dwd_quality_gate
+  -> dws_sales_summary
+      -> ads_country_sales_rank
 
 ads_high_value_customer_sales_contribution
 ads_customer_level_distribution
@@ -42,14 +239,101 @@ ads_high_value_customer_preference
 ads_country_sales_rank
   -> hive_data_quality_check
 
-五、批次管理设计
-项目通过 bizdate 参数控制业务日期，默认使用 DolphinScheduler 全局参数 $[yyyy-MM-dd-1] 调度上一天数据。手动补数时可以指定具体业务日期。Hive 结果表使用 INSERT OVERWRITE PARTITION 写入方式，便于指定分区重跑并保证幂等性。
+设计含义：
 
-六、失败处理思路
-当某一层任务执行失败时，下游任务不应继续执行。问题修复后，可以基于同一业务日期重新执行失败节点及其后续节点。由于各层按 dt 分区覆盖写入，重复执行同一天任务不会产生重复数据。
+1. ODS 和 DWD 必须按顺序完成；
+2. DWD 质量门禁通过后，两个 DWS 分支才会启动；
+3. 客户价值 DWS 和国家销售 DWS 可以并行；
+4. 同一 DWS 下的多个 ADS 可以并行；
+5. 四个 ADS 全部完成后，才执行最终结果检查。
 
-七、结果验收设计
-每次调度完成后，通过数据质量校验脚本对核心结果表进行检查，包括 ODS/DWD/DWS/ADS 分区行数、DWD 清洗质量、DWS 客户分层边界、ADS 指标范围和排行字段有效性。
+六、失败处理
 
-八、公开仓库说明
-公开仓库中不保留真实服务器账号、真实内网 IP、明文密码或数据库连接凭据。涉及远程执行的命令统一使用 ${HIVE_USER}、${HIVE_HOST}、${PROJECT_HOME} 等占位符表示。
+DolphinScheduler 默认只在上游任务成功后执行下游任务。
+
+本 DAG 中：
+
+1. SQL 或 SSH 命令返回非零状态时，当前节点失败；
+2. dwd_quality_gate 检测到 BLOCK 失败时，DWS 和 ADS 不会继续执行；
+3. 问题修复后，可以使用同一个 bizdate 重跑失败节点及其后续节点；
+4. Hive 表按 dt 分区使用 INSERT OVERWRITE 时，同一天重跑不会继续追加重复记录；
+5. INSERT OVERWRITE 只能保证覆盖写入，不能单独证明内容幂等；
+6. 完整内容幂等性应使用 hive_sql/run_idempotency_check_hive.sh 单独验证。
+
+当前 JSON 中任务重试次数为 0。是否增加自动重试，需要根据故障类型决定，不能对 SQL 逻辑错误盲目重试。
+
+七、当前 DAG 与最新 Shell 主链路的差异
+
+最新 run_all_hive.sh 已包含：
+
+1. ODS Raw 创建和加载；
+2. ODS Reject 创建和加载；
+3. 正常 ODS 从 Raw 加载；
+4. ODS 入仓完整性门禁；
+5. ODS 内容检查；
+6. DWD 门禁；
+7. DWS/ADS 结果门禁；
+8. 星型模型；
+9. 星型模型门禁；
+10. 最终结果展示。
+
+当前 12 节点 DolphinScheduler DAG 尚未包含：
+
+1. ods_raw_create；
+2. ods_raw_load；
+3. ods_reject_create；
+4. ods_reject_load；
+5. ods_ingestion_gate；
+6. result_quality_gate；
+7. dim_user、dim_product、dim_date、dim_geo；
+8. fact_order；
+9. dws_customer_value_star；
+10. star_quality_gate。
+
+因此当前项目应统一描述为：
+
+当前最完整执行链路：
+hive_sql/run_all_hive.sh
+
+已经验收的调度演示：
+DolphinScheduler 12 节点 DAG
+
+八、导入与部署注意事项
+
+1. 导入前确认 JSON 中 processTaskRelationList 存在且非空。
+2. 不要手工删除或随意修改 taskCode 和任务关系编码。
+3. 导入后修改 HIVE_USER、HIVE_HOST 和 PROJECT_HOME。
+4. 确认 DolphinScheduler Worker 容器已经安装 OpenSSH Client。
+5. 确认 Worker 能够通过 SSH 密钥免密连接 Hive 主机。
+6. 确认远程主机上的 SQL 和 Shell 文件路径与任务命令一致。
+7. 确认远程 Shell 文件具有可执行权限。
+8. 先手动运行一个具体 bizdate，再配置正式调度。
+9. schedule 为 null 是公开模板的有意设计，不是 JSON 错误。
+10. 公开仓库不得写入真实用户名、主机名、IP、密码或私钥。
+
+九、结果验收
+
+调度成功后至少检查：
+
+1. 工作流实例状态为 SUCCESS；
+2. 12 个任务节点全部成功；
+3. dwd_quality_gate 输出 failed_count=0；
+4. 指定 bizdate 的 ODS、DWD、DWS 和 ADS 分区存在；
+5. 09_check_hive_result.sql 输出的异常数量符合预期；
+6. ADS 指标和截图中的业务结果一致；
+7. 任务实际使用的 bizdate 与预期一致。
+
+当前仓库中的调度截图对应本 12 节点演示 DAG，不代表最新 20 步 Shell 链路已经全部调度化。
+
+十、后续升级原则
+
+把最新 Shell 链路升级到 DolphinScheduler 时，建议按以下顺序进行：
+
+1. 先增加 ODS Raw 和 Reject 节点；
+2. 再增加 ODS 入仓完整性门禁；
+3. 确认新 ODS 链路成功后，再增加 DWS/ADS 结果门禁；
+4. 最后增加星型模型和星型门禁；
+5. 每增加一组节点，都先手动运行和验证失败阻断；
+6. 完成全部验证后，再导出新的公开模板 JSON。
+
+在新 DAG 完成并验收前，不修改当前文档为“DolphinScheduler 已完整覆盖 20 步”。

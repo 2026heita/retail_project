@@ -1,22 +1,31 @@
-# ETL logs
-scripts/etl_log.txt
+# =====================================================
+# File: .gitignore
+# Property: Long-term repository file
+# =====================================================
 
-# Logs
+# Runtime ETL logs and profiling outputs
+/logs/
+
+# Legacy ETL log path
+/scripts/etl_log.txt
+
+# Other log files
 *.log
 
-# Temporary files
+# Temporary and backup files
 *.tmp
 *.bak
 *.swp
+*~
 
-# Compressed files
+# Compressed and packaged files
 *.zip
 *.rar
 *.7z
 *.tar
 *.gz
 
-# Database / connection config
+# Database / connection configuration
 *.env
 .env
 *.ini

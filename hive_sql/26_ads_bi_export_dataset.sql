@@ -1,36 +1,50 @@
 -- =====================================================
 -- 文件名: 26_ads_bi_export_dataset.sql
+-- 文件属性: 长期保留，提交代码仓库
 -- 功能: ADS 核心指标汇总导出查询模板
 -- 说明:
---   1. 汇总部分核心 ADS 指标，便于导出统一指标数据或辅助轻量级 BI Dashboard 数据准备。
---   2. 该 SQL 为可选扩展查询，不参与 Hive 主链路 run_all_hive.sh 执行。
---   3. 当前 HTML + ECharts 轻量级 BI Dashboard 主要基于 ADS 导出 TSV 文件生成，不依赖重型 BI 工具。
+--   1. 输出统一的 dt、metric_name、metric_value 三列，
+--      便于导出 TSV/CSV 或作为轻量级 BI Dashboard 数据源。
+--   2. 本 SQL 为可选扩展查询，不参与 run_all_hive.sh 主链路。
+--   3. 所有指标统一转换为 DECIMAL(18,2)，避免 UNION ALL 类型不一致。
 -- =====================================================
 
+-- 1. 高价值客户销售贡献率（百分比）
 SELECT
     dt,
-    'High Value Customer Sales Contribution' AS metric_name,
-    SUM(amount) AS metric_value
+    'High Value Sales Contribution Pct' AS metric_name,
+    CAST(
+        COALESCE(MAX(sales_contribution_pct), 0)
+        AS DECIMAL(18,2)
+    ) AS metric_value
 FROM ads_high_value_customer_sales_contribution_hive
 WHERE dt = '${hiveconf:bizdate}'
 GROUP BY dt
 
 UNION ALL
 
+-- 2. 全部客户数量
 SELECT
     dt,
-    'Customer Level Distribution' AS metric_name,
-    COUNT(*) AS metric_value
+    'Total Customer Count' AS metric_name,
+    CAST(
+        COALESCE(SUM(customer_cnt), 0)
+        AS DECIMAL(18,2)
+    ) AS metric_value
 FROM ads_customer_level_distribution_hive
 WHERE dt = '${hiveconf:bizdate}'
 GROUP BY dt
 
 UNION ALL
 
+-- 3. 全部销售额
 SELECT
     dt,
-    'Country Sales Rank' AS metric_name,
-    SUM(total_sales) AS metric_value
+    'Total Sales' AS metric_name,
+    CAST(
+        COALESCE(SUM(total_sales), 0)
+        AS DECIMAL(18,2)
+    ) AS metric_value
 FROM ads_country_sales_rank_hive
 WHERE dt = '${hiveconf:bizdate}'
 GROUP BY dt;
