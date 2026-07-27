@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: retail-bi-server
+
+  datasource:
+    url: jdbc:mysql://${RETAIL_DB_HOST:192.168.85.100}:${RETAIL_DB_PORT:3306}/${RETAIL_DB_NAME:retail_bi}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${RETAIL_DB_USERNAME:retail_api_user}
+    password: ${RETAIL_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+server:
+  port: ${SERVER_PORT:8080}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [requestId=%X{requestId:-none}] %logger{36} - %msg%n"
