@@ -2,6 +2,7 @@ package com.retail.bi.controller;
 
 import com.retail.bi.common.ApiResponse;
 import com.retail.bi.dto.DashboardQueryDTO;
+import com.retail.bi.dto.SalesTrendQueryDTO;
 import com.retail.bi.filter.RequestIdFilter;
 import com.retail.bi.service.SalesOverviewMetricService;
 import com.retail.bi.vo.SalesOverviewVO;
@@ -13,12 +14,14 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 销售概览接口控制器。
  *
  * 作用：
- * 1. 接收销售概览查询参数；
- * 2. 调用指标服务查询应用层指标；
+ * 1. 接收销售概览与趋势查询参数；
+ * 2. 调用指标服务查询 MySQL 应用层指标；
  * 3. 返回统一响应结构和 requestId。
  */
 @RestController
@@ -37,10 +40,6 @@ public class SalesOverviewController {
      *
      * 请求示例：
      * GET /api/v1/dashboard/overview?date=2026-04-08
-     *
-     * @param query   销售概览查询参数
-     * @param request 当前 HTTP 请求
-     * @return 销售概览统一响应
      */
     @GetMapping("/overview")
     public ResponseEntity<ApiResponse<SalesOverviewVO>> getOverview(
@@ -50,12 +49,41 @@ public class SalesOverviewController {
         SalesOverviewVO result =
                 salesOverviewMetricService.getByDate(query.getDate());
 
-        String requestId = (String) request.getAttribute(
-                RequestIdFilter.REQUEST_ID
+        return ResponseEntity.ok(
+                ApiResponse.success(result, getRequestId(request))
         );
+    }
+
+    /**
+     * 查询指定日期范围内的每日销售趋势。
+     *
+     * 请求示例：
+     * GET /api/v1/dashboard/overview/trend
+     *     ?startDate=2026-04-01
+     *     &endDate=2026-04-08
+     */
+    @GetMapping("/overview/trend")
+    public ResponseEntity<ApiResponse<List<SalesOverviewVO>>> getTrend(
+            @Valid @ModelAttribute SalesTrendQueryDTO query,
+            HttpServletRequest request) {
+
+        List<SalesOverviewVO> result =
+                salesOverviewMetricService.getTrend(
+                        query.getStartDate(),
+                        query.getEndDate()
+                );
 
         return ResponseEntity.ok(
-                ApiResponse.success(result, requestId)
+                ApiResponse.success(result, getRequestId(request))
+        );
+    }
+
+    /**
+     * 获取当前请求的 requestId。
+     */
+    private String getRequestId(HttpServletRequest request) {
+        return (String) request.getAttribute(
+                RequestIdFilter.REQUEST_ID
         );
     }
 }
