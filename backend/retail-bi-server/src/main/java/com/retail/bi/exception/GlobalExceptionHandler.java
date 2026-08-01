@@ -93,10 +93,10 @@ public class GlobalExceptionHandler {
 
         String requestId = getRequestId(request);
 
-        // 当前返回第一个字段错误，避免一次返回过多无关信息。
+        // 当前返回第一个校验错误，避免一次返回过多无关信息。
         String message = exception
                 .getBindingResult()
-                .getFieldErrors()
+                .getAllErrors()
                 .stream()
                 .findFirst()
                 .map(error -> error.getDefaultMessage())
