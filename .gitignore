@@ -38,3 +38,10 @@ config_local.*
 Thumbs.db
 .vscode/
 .idea/
+
+# Trae IDE
+.trae/
+
+# Local environment files
+.env.local
+.env.*.local

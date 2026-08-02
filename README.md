@@ -744,6 +744,8 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 | 文档 | 内容 |
 |---|---|
+| [docs/warehouse_implementation_details.md](docs/warehouse_implementation_details.md) | 数仓分层、质量门禁、回刷、SCD2、调度、性能分析及 BI 应用闭环 |
+| [backend/retail-bi-server/README.md](backend/retail-bi-server/README.md) | Spring Boot 后端配置、接口、环境变量、运行方式与当前边界 |
 | [docs/setup_local_hive.md](docs/setup_local_hive.md) | 本地 Hive 最小部署与复现 |
 | [hive_sql/hive_migration_design.md](hive_sql/hive_migration_design.md) | Hive 分层、质量、回刷、SCD2 和性能设计 |
 | [hive_sql/interview_hive_talking_points.md](hive_sql/interview_hive_talking_points.md) | 技术问题与设计依据 |
