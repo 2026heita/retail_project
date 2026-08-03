@@ -2,6 +2,8 @@
 
 > MySQL + Hive + DolphinScheduler + Spring Boot + React
 
+> **零售 BI 全链路闭环项目**：围绕零售经营分析场景，完成从 Hive 数仓分层（ODS/DWD/DWS/ADS）、数据质量校验，到 Spring Boot 指标服务和 React BI 展示的完整链路，支持经营概览、趋势分析与日环比分析。
+
 本项目以零售订单数据为基础，完成了从数据清洗、离线数仓分层、质量门禁、调度编排，到 ADS 指标同步、Java 查询 API 和前端 BI 分析的完整闭环。
 
 当前已实现三项核心分析能力：
