@@ -409,12 +409,12 @@ public record ApiResponse<T>(
 ```sql
 CREATE TABLE bi_sales_overview_daily (
     dt DATE PRIMARY KEY,              -- 业务日期
-    total_sales DECIMAL(15,2),        -- 销售额
-    total_orders INT,                 -- 订单数
-    total_customers INT,              -- 客户数
-    total_quantity INT,               -- 销量
-    avg_order_value DECIMAL(15,2),    -- 客单价
-    source_system VARCHAR(50)         -- 数据来源
+    total_sales DECIMAL(18,2),        -- 销售额
+    total_orders BIGINT,              -- 订单数
+    total_customers BIGINT,           -- 客户数
+    total_quantity BIGINT,            -- 销量
+    avg_order_value DECIMAL(18,2),    -- 客单价
+    source_system VARCHAR(32)         -- 数据来源
 );
 ```
 
