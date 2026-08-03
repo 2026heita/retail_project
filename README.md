@@ -2,7 +2,13 @@
 
 > MySQL + Hive + DolphinScheduler + Spring Boot + React
 
-本项目以零售订单数据为基础，完成了从数据清洗、离线数仓分层、质量门禁、调度编排，到 ADS 指标同步、Java 查询 API 和前端趋势分析的完整链路。
+本项目以零售订单数据为基础，完成了从数据清洗、离线数仓分层、质量门禁、调度编排，到 ADS 指标同步、Java 查询 API 和前端 BI 分析的完整闭环。
+
+当前已实现三项核心分析能力：
+
+- **单日经营概览**：查看指定日期的销售额、订单数、客户数、销量、客单价五项 KPI
+- **多日趋势分析**：按日期范围查询经营趋势，支持前端时间序列图展示
+- **日环比分析**：对比当前日与前一日，计算五项指标的环比变化百分比
 
 项目重点不是堆叠技术名词，而是展示一条可以解释、可以重跑、可以对账、可以验收的工程链路：
 
@@ -11,8 +17,8 @@
 → Hive ODS / DWD / DWS / ADS
 → Shell 同步与对账
 → MySQL BI 应用表
-→ Spring Boot 指标 API
-→ React 分析平台
+→ Spring Boot 指标 API（单日概览 / 趋势 / 日环比）
+→ React BI Connector → 通用分析平台
 ```
 
 这是个人工程实践与作品集项目。文档会明确区分已验证能力、演示数据和当前边界，不将单机学习环境描述为生产级系统。
@@ -29,8 +35,8 @@
 | 维度建模 | 每日完整快照式 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
 | BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标 |
-| Java 服务 | 单日概览、日期范围趋势、Bean Validation、统一响应、全局异常、requestId |
-| 前端闭环 | 外部数据源接入、字段识别、描述统计、CSV 导出、时间趋势图 |
+| Java 服务 | 单日概览、日期范围趋势、日环比分析、Bean Validation、统一响应、全局异常、requestId |
+| 前端闭环 | 零售 BI Connector、KPI 经营概览、日环比变化分析、后端 API 联通、时间趋势图、CSV 导出 |
 
 当前主回归日期 `2026-04-08` 的核心结果：
 
@@ -535,6 +541,23 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
   "requestId": "bde1111f-bb87-4a78-bfd7-c9524f397d7e"
 }
 ```
+
+#### 日环比对比
+
+```http
+GET /api/v1/dashboard/overview/comparison?date=2026-04-08
+```
+
+功能：对比当前日与前一日（`date.minusDays(1)`）的经营数据，计算五项指标的环比变化百分比。
+
+规则：
+
+- `date` 必填，格式为 `yyyy-MM-dd`；
+- 不能晚于当前日期；
+- 当前日无数据时返回 `404`；
+- 前一日无数据时返回 `200`，`comparisonAvailable=false`，`previous` 和 `changePercent` 为 `null`；
+- 环比公式：`(current - previous) / previous × 100`，使用 `BigDecimal` 计算，保留两位小数；
+- 前一日某项指标为 0 时，对应百分比返回 `null`，避免除以 0。
 
 业务接口使用统一 `ApiResponse`。`RequestIdFilter` 会读取或生成 `X-Request-Id`，写入响应头和 MDC；业务响应体同时返回 `requestId`，便于关联前后端日志。
 
