@@ -5,6 +5,7 @@ import com.retail.bi.dto.DashboardQueryDTO;
 import com.retail.bi.dto.SalesTrendQueryDTO;
 import com.retail.bi.filter.RequestIdFilter;
 import com.retail.bi.service.SalesOverviewMetricService;
+import com.retail.bi.vo.SalesOverviewComparisonVO;
 import com.retail.bi.vo.SalesOverviewVO;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -72,6 +73,28 @@ public class SalesOverviewController {
                         query.getStartDate(),
                         query.getEndDate()
                 );
+
+        return ResponseEntity.ok(
+                ApiResponse.success(result, getRequestId(request))
+        );
+    }
+
+    /**
+     * 查询指定业务日期的销售概览日环比数据。
+     *
+     * 请求示例：
+     * GET /api/v1/dashboard/overview/comparison?date=2026-04-08
+     *
+     * 返回当前日与前一日（date.minusDays(1)）的对比数据，
+     * 包含五项指标的环比变化百分比。
+     */
+    @GetMapping("/overview/comparison")
+    public ResponseEntity<ApiResponse<SalesOverviewComparisonVO>> getComparison(
+            @Valid @ModelAttribute DashboardQueryDTO query,
+            HttpServletRequest request) {
+
+        SalesOverviewComparisonVO result =
+                salesOverviewMetricService.getComparison(query.getDate());
 
         return ResponseEntity.ok(
                 ApiResponse.success(result, getRequestId(request))

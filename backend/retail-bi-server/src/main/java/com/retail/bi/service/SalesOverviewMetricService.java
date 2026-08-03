@@ -1,5 +1,6 @@
 package com.retail.bi.service;
 
+import com.retail.bi.vo.SalesOverviewComparisonVO;
 import com.retail.bi.vo.SalesOverviewVO;
 
 import java.time.LocalDate;
@@ -34,4 +35,12 @@ public interface SalesOverviewMetricService {
             LocalDate startDate,
             LocalDate endDate
     );
+
+    /**
+     * 查询指定日期的销售概览日环比数据。
+     *
+     * @param date 业务日期
+     * @return 日环比对比结果
+     */
+    SalesOverviewComparisonVO getComparison(LocalDate date);
 }

@@ -2,10 +2,14 @@ package com.retail.bi.service;
 
 import com.retail.bi.exception.BusinessException;
 import com.retail.bi.mapper.SalesOverviewMapper;
+import com.retail.bi.vo.SalesOverviewChangePercentVO;
+import com.retail.bi.vo.SalesOverviewComparisonVO;
 import com.retail.bi.vo.SalesOverviewVO;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -55,5 +59,119 @@ public class SalesOverviewMetricServiceImpl
         }
 
         return result;
+    }
+
+    /**
+     * 查询指定日期的销售概览日环比数据。
+     *
+     * @param date 业务日期
+     * @return 日环比对比结果
+     */
+    @Override
+    public SalesOverviewComparisonVO getComparison(LocalDate date) {
+        // 查询当前日数据，不存在则抛出 404 业务异常
+        SalesOverviewVO current = salesOverviewMapper.selectByDate(date);
+        if (current == null) {
+            throw new BusinessException(
+                    HttpStatus.NOT_FOUND,
+                    "未找到指定日期的销售概览数据"
+            );
+        }
+
+        // 查询前一日数据
+        LocalDate comparisonDate = date.minusDays(1);
+        SalesOverviewVO previous = salesOverviewMapper.selectByDate(comparisonDate);
+
+        SalesOverviewComparisonVO result = new SalesOverviewComparisonVO();
+        result.setDate(date);
+        result.setComparisonDate(comparisonDate);
+        result.setCurrent(current);
+
+        // 前一日数据不存在时，comparisonAvailable=false
+        if (previous == null) {
+            result.setComparisonAvailable(false);
+            result.setPrevious(null);
+            result.setChangePercent(null);
+            return result;
+        }
+
+        // 前一日数据存在，计算环比
+        result.setComparisonAvailable(true);
+        result.setPrevious(previous);
+        result.setChangePercent(calculateChangePercent(current, previous));
+
+        return result;
+    }
+
+    /**
+     * 计算五项指标的环比变化百分比。
+     *
+     * 公式：(current - previous) / previous × 100
+     * 规则：
+     * - 使用 BigDecimal 计算，保留两位小数，HALF_UP 舍入
+     * - 前一日某项指标为 0 时，对应百分比为 null（避免除以 0）
+     *
+     * @param current  当前日数据
+     * @param previous 前一日数据
+     * @return 环比变化百分比 VO
+     */
+    private SalesOverviewChangePercentVO calculateChangePercent(
+            SalesOverviewVO current,
+            SalesOverviewVO previous) {
+
+        SalesOverviewChangePercentVO percent = new SalesOverviewChangePercentVO();
+
+        percent.setTotalSalesPercent(
+                calculatePercentChange(current.getTotalSales(), previous.getTotalSales())
+        );
+        percent.setTotalOrdersPercent(
+                calculatePercentChange(current.getTotalOrders(), previous.getTotalOrders())
+        );
+        percent.setTotalCustomersPercent(
+                calculatePercentChange(current.getTotalCustomers(), previous.getTotalCustomers())
+        );
+        percent.setTotalQuantityPercent(
+                calculatePercentChange(current.getTotalQuantity(), previous.getTotalQuantity())
+        );
+        percent.setAvgOrderValuePercent(
+                calculatePercentChange(current.getAvgOrderValue(), previous.getAvgOrderValue())
+        );
+
+        return percent;
+    }
+
+    /**
+     * 计算单个指标的环比变化百分比。
+     *
+     * @param current  当前值
+     * @param previous 前一日值
+     * @return 百分比变化，前一日为 0 时返回 null
+     */
+    private BigDecimal calculatePercentChange(BigDecimal current, BigDecimal previous) {
+        if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
+            return null;
+        }
+        // (current - previous) / previous × 100
+        return current.subtract(previous)
+                .divide(previous, 4, RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100"))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 计算单个指标的环比变化百分比（Long 类型）。
+     *
+     * @param current  当前值
+     * @param previous 前一日值
+     * @return 百分比变化，前一日为 0 时返回 null
+     */
+    private BigDecimal calculatePercentChange(Long current, Long previous) {
+        if (current == null || previous == null || previous == 0L) {
+            return null;
+        }
+        // 先安全转换为 BigDecimal
+        BigDecimal currentBd = BigDecimal.valueOf(current);
+        BigDecimal previousBd = BigDecimal.valueOf(previous);
+        return calculatePercentChange(currentBd, previousBd);
     }
 }

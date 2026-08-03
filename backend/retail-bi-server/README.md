@@ -57,7 +57,9 @@ src/main/java/com/retail/bi/
 │   ├── SalesOverviewMetricService.java
 │   └── SalesOverviewMetricServiceImpl.java
 └── vo/
-    └── SalesOverviewVO.java          # 返回对象
+    ├── SalesOverviewVO.java          # 返回对象
+    ├── SalesOverviewComparisonVO.java        # 日环比对比结果
+    └── SalesOverviewChangePercentVO.java     # 环比变化百分比
 ```
 
 ## API 接口
@@ -157,6 +159,112 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
 **错误响应：**
 - 400：参数缺失、格式错误、日期顺序错误或范围超限
 
+### 4. 日环比对比
+
+```
+GET /api/v1/dashboard/overview/comparison?date=2026-04-08
+```
+
+**参数：**
+- `date`（必填）：业务日期，ISO 格式（yyyy-MM-dd）
+- 不能晚于当前日期
+
+**口径说明：**
+- 比较日期固定为前一自然日：`comparisonDate = date.minusDays(1)`
+- 不自动选择数据库中最近有数据的日期
+
+**环比公式：**
+```
+changePercent = (current - previous) / previous × 100
+```
+
+**计算规则：**
+- 使用 `BigDecimal` 计算，不使用 `double`
+- 保留两位小数，使用 `RoundingMode.HALF_UP` 舍入
+- 字段名包含 `Percent`，表示返回值 `12.34` 是百分之十二点三四
+
+**基准日缺失处理：**
+- 当前日数据不存在：返回 404 业务异常
+- 前一日数据不存在：返回 HTTP 200，`comparisonAvailable=false`，`previous` 和 `changePercent` 为 `null`
+
+**除零处理：**
+- 前一日某项指标为 0 时，对应百分比返回 `null`，其他指标正常计算
+- 不允许除以 0
+
+**响应示例（前一日数据存在）：**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "date": "2026-04-08",
+    "comparisonDate": "2026-04-07",
+    "comparisonAvailable": true,
+    "current": {
+      "dt": "2026-04-08",
+      "totalSales": 53230287.48,
+      "totalOrders": 36970,
+      "totalCustomers": 5878,
+      "totalQuantity": 32118447,
+      "avgOrderValue": 1439.82,
+      "sourceSystem": "hive_ads"
+    },
+    "previous": {
+      "dt": "2026-04-07",
+      "totalSales": 48500000.00,
+      "totalOrders": 34000,
+      "totalCustomers": 5500,
+      "totalQuantity": 29500000,
+      "avgOrderValue": 1426.47,
+      "sourceSystem": "hive_ads"
+    },
+    "changePercent": {
+      "totalSalesPercent": 9.75,
+      "totalOrdersPercent": 8.74,
+      "totalCustomersPercent": 6.87,
+      "totalQuantityPercent": 8.88,
+      "avgOrderValuePercent": 0.94
+    }
+  },
+  "requestId": "c3d4e5f6-a7b8-9012-cdef-123456789012"
+}
+```
+
+**响应示例（前一日数据不存在）：**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "date": "2026-04-08",
+    "comparisonDate": "2026-04-07",
+    "comparisonAvailable": false,
+    "current": {
+      "dt": "2026-04-08",
+      "totalSales": 53230287.48,
+      "totalOrders": 36970,
+      "totalCustomers": 5878,
+      "totalQuantity": 32118447,
+      "avgOrderValue": 1439.82,
+      "sourceSystem": "hive_ads"
+    },
+    "previous": null,
+    "changePercent": null
+  },
+  "requestId": "d4e5f6a7-b8c9-0123-def1-234567890123"
+}
+```
+
+**错误响应：**
+- 404：当前日无数据
+- 400：日期格式错误或晚于当前日期
+
+**当前未实现：**
+- 同比（与去年同期对比）
+- 自定义比较日期范围
+
 ## 环境变量
 
 启动前需要配置以下环境变量：
@@ -215,6 +323,10 @@ java -jar target/retail-bi-server-0.0.1-SNAPSHOT.jar
 
 当前测试覆盖：
 - `RetailBiServerApplicationTests.java`：应用启动测试
+- `SalesOverviewControllerTest.java`：Controller 参数校验和响应结构测试（16 个测试）
+- `SalesOverviewMetricServiceImplTest.java`：Service 环比计算逻辑测试（7 个测试）
+
+总测试数：24 个（1 + 16 + 7）
 
 ### 手动验证接口
 
