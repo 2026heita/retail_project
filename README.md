@@ -53,6 +53,22 @@ DWD / fact_order       2,416,593 行
 星型模型质量规则          12 / 12 PASS
 ```
 
+### 数据来源与口径
+
+本项目使用三种数据 profile，各自用途不同：
+
+| Profile | 规模 | 日期范围 | 用途 |
+|---|---|---|---|
+| `canonical` | 1,067,371 行 | 2009—2011 | 业务口径定义、标准数据验证 |
+| `engineering_legacy_3x` | 约 3,202,113 行 | 2026-04-08 | 历史工程回归基线，保留分区/重跑/门禁/星型模型验收证据 |
+| `synthetic_multiday` | 约 3,202,113 行/天 | 2026-04-01 至 2026-04-07 | 回刷、T+1、幂等性、趋势接口和前端链路验证 |
+
+- `canonical` 基于 UCI Online Retail II 公开数据集，原始日期为 2009—2011 年。
+- `engineering_legacy_3x` 是较早阶段通过复制扩展生成的工程验证数据，日期偏移至 2026-04-08，用于证明分区重跑、质量门禁、星型模型和 DolphinScheduler 链路曾经运行成功。它不代表真实企业经营数据。
+- `synthetic_multiday` 是同一工程扩展数据按多日期分区写入的结果，用于验证区间回刷、T+1 修正、幂等性检查和前端多日趋势链路。
+
+所有基于公开数据构建的模拟分析结果应在文档、截图和面试中如实说明，不与真实企业经营指标混淆。
+
 ---
 
 ## 2. 整体架构
@@ -147,7 +163,7 @@ Java 服务不扫描订单明细，也不重复执行 Hive 已完成的聚合。
 ```text
 retail_project/
 ├── README.md
-├── sample_data/                     # 最小公开样例数据
+├── data/sample/                     # 最小公开样例数据
 ├── sql/                             # MySQL 清洗、DWS / ADS、日志和质量检查
 ├── scripts/                         # MySQL 本地执行与调度演示
 ├── hive_sql/                        # Hive 分层 SQL、质量门禁和 Shell 主链路
@@ -438,7 +454,7 @@ bash sync/01_sync_sales_overview_to_mysql.sh 2026-04-08
 
 `2026-04-08` 是当前主回归业务日期。
 
-`2026-04-01` 至 `2026-04-07` 用于验证多日期 ADS、同步、趋势 API 和前端时间序列链路。多个演示日期结果相同，不代表真实业务连续多天完全一致。
+`2026-04-01` 至 `2026-04-07` 用于验证多日期 ADS、同步、趋势 API 和前端时间序列链路。多个演示日期结果相同，不代表业务连续多天完全一致。
 
 ---
 
@@ -685,7 +701,7 @@ docs/multiday_validation_screenshots/
 
 ```bash
 hive \
-  --hiveconf source_file=/path/to/retail_project/sample_data/retail_sample.csv \
+  --hiveconf source_file=/path/to/retail_project/data/sample/retail_sample.csv \
   -f hive_sql/00_bootstrap_sample_source_hive.sql
 ```
 
@@ -736,7 +752,7 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ### 为什么多日趋势数据要明确标注为演示数据？
 
-`2026-04-01` 至 `2026-04-07` 用于验证链路，不代表真实业务连续七天的自然波动。公开项目应区分技术验证数据和真实业务结论。
+`2026-04-01` 至 `2026-04-07` 用于验证链路，不代表业务连续七天的自然波动。公开项目应区分技术验证数据和业务结论。
 
 ---
 

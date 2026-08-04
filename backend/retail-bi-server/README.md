@@ -336,10 +336,10 @@ java -jar target/retail-bi-server-0.0.1-SNAPSHOT.jar
 # 健康检查
 curl http://localhost:8080/api/v1/health
 
-# 单日概览（2026-04-08 是真实回归日）
+# 单日概览（2026-04-08 是历史工程回归日）
 curl "http://localhost:8080/api/v1/dashboard/overview?date=2026-04-08"
 
-# 趋势查询（2026-04-01 至 2026-04-07 主要是趋势链路演示数据）
+# 趋势查询（2026-04-01 至 2026-04-07 是多日期链路验证数据）
 curl "http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08"
 ```
 
@@ -422,8 +422,8 @@ CREATE TABLE bi_sales_overview_daily (
 
 ## 演示数据说明
 
-- **2026-04-08**：真实回归日，核心验证基线
-- **2026-04-01 至 2026-04-07**：趋势链路演示数据，用于验证多日期查询
+- **2026-04-08**：历史工程回归日，核心验证基线
+- **2026-04-01 至 2026-04-07**：多日期链路验证数据，用于验证多日期查询
 
 演示数据不代表真实业务连续性，仅用于工程验证。
 
