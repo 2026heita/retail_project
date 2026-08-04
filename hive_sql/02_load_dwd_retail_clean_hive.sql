@@ -37,9 +37,9 @@ WITH ods_parsed AS (
 INSERT OVERWRITE TABLE dwd_retail_clean_hive
 PARTITION (dt = '${hiveconf:bizdate}')
 SELECT
-    invoice,
-    stockcode,
-    description,
+    TRIM(invoice) AS invoice,
+    UPPER(TRIM(stockcode)) AS stockcode,
+    TRIM(description) AS description,
     quantity,
 
     FROM_UNIXTIME(
@@ -48,8 +48,14 @@ SELECT
     ) AS invoicedate,
 
     CAST(price AS DECIMAL(10,2)) AS price,
-    CAST(customerid AS STRING) AS customerid,
-    country,
+    -- Normalize CustomerID: strip trailing ".0" from pure-numeric IDs,
+    -- preserve original value for non-numeric IDs.
+    CASE
+        WHEN CAST(customerid AS STRING) RLIKE '^[0-9]+\\.0$'
+        THEN REGEXP_REPLACE(CAST(customerid AS STRING), '\\.0$', '')
+        ELSE CAST(customerid AS STRING)
+    END AS customerid,
+    TRIM(country) AS country,
     CAST(ROUND(quantity * price, 2) AS DECIMAL(12,2)) AS amount
 
 FROM ods_parsed
