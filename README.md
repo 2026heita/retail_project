@@ -765,7 +765,23 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ---
 
-## 15. 延伸文档
+## 15. React BI 展示效果
+
+React BI 前端项目已实现零售 BI 数据连接器，完整闭环：
+
+```
+Hive ADS → Shell 同步 → MySQL → Spring Boot API → React 前端展示
+```
+
+| 截图 | 说明 |
+|---|---|
+| [BI Connector 接入成功](docs/result_screenshots/10_retail_bi_connector_success.png) | 外部数据源折叠面板展开，API 地址和日期范围配置完成 |
+| [单日经营概览与日环比](docs/result_screenshots/11_retail_bi_overview_comparison.png) | 五个核心 KPI 卡片 + 日环比变化百分比 |
+| [多日趋势分析](docs/result_screenshots/12_retail_bi_sales_trend.png) | 时间趋势折线图展示销售额、订单数等指标变化 |
+
+---
+
+## 16. 延伸文档
 
 | 文档 | 内容 |
 |---|---|
@@ -782,7 +798,7 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ---
 
-## 16. 公开仓库说明
+## 17. 公开仓库说明
 
 仓库只应保留：
 

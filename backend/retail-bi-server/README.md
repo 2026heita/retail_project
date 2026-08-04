@@ -484,3 +484,13 @@ CREATE TABLE bi_sales_overview_daily (
 - [数仓实现细节](../../docs/warehouse_implementation_details.md)：Hive 分层与质量门禁
 - [MySQL 建表脚本](../../mysql/01_create_retail_bi_tables.sql)：应用表结构
 - [同步脚本](../../sync/01_sync_sales_overview_to_mysql.sh)：数据同步流程
+
+## 前端联调
+
+React BI 前端项目已实现零售 BI 数据连接器，调用本服务的三个 API：
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/v1/dashboard/overview/trend` | 日期范围趋势数据，进入前端通用分析流程 |
+| `GET /api/v1/dashboard/overview` | 单日经营概览 KPI 卡片 |
+| `GET /api/v1/dashboard/overview/comparison` | 日环比变化百分比 |

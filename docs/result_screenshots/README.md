@@ -32,6 +32,9 @@ DolphinScheduler 截图不代表 ODS Raw、ODS Reject、ODS 入仓完整性门�
 | `07_ads_customer_preference_20260408.png` | `dt=2026-04-08` 的高价值客户商品偏好查询结果。 |
 | `08_light_bi_dashboard_top_20260408.png` | 轻量 BI Dashboard 上半部分：高价值客户指标和客户层级分布。 |
 | `09_light_bi_dashboard_bottom_20260408.png` | 轻量 BI Dashboard 下半部分：国家销售额 Top10 和偏好商品 Top10。 |
+| `10_retail_bi_connector_success.png` | 前端零售 BI 连接器接入成功：外部数据源折叠面板展开，API 地址和日期范围配置完成。 |
+| `11_retail_bi_overview_comparison.png` | 前端单日经营概览与日环比分析：五个核心 KPI 卡片及日环比变化百分比。 |
+| `12_retail_bi_sales_trend.png` | 前端多日趋势分析：时间趋势折线图展示销售额、订单数等指标在日期范围内的变化。 |
 
 ---
 
