@@ -49,14 +49,13 @@ FROM dwd_retail_clean_hive
 WHERE dt = '${hiveconf:bizdate}';
 
 -- ---------------------------------------------------
--- 4. CustomerID 标准化影响分析
---    统计标准化前后 customerid 值发生变化的记录数
---    （通过比较原始 customerid 和标准化后的 customerid）
+-- 4. CustomerID 格式分布
+--    统计 DWD 中纯数字和非纯数字 customerid 的数量
+--    注意：这只是 DWD 标准化后的格式分布，不能证明标准化影响行数
 -- ---------------------------------------------------
 SELECT
-    'customerid_normalization_impact' AS check_type,
-    -- 假设 ODS 中 customerid 可能包含 .0，DWD 中已剥离
-    -- 这里统计 DWD 中 customerid 是纯数字的记录数（已剥离 .0 的）
+    'customerid_format_distribution' AS check_type,
+    -- DWD 中 customerid 是纯数字的记录数（已剥离 .0 的）
     SUM(CASE WHEN customerid RLIKE '^[0-9]+$' THEN 1 ELSE 0 END) AS numeric_customerid_count,
     -- 非纯数字 customerid 的记录数（保留原值的）
     SUM(CASE WHEN customerid NOT RLIKE '^[0-9]+$' THEN 1 ELSE 0 END) AS non_numeric_customerid_count,

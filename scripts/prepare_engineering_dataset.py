@@ -64,6 +64,46 @@ DEFAULT_ENCODING = "latin-1"
 DEFAULT_CHUNKSIZE = 100_000
 DEFAULT_OUTPUT_NAME = "retail_engineering_reproducible_3x.csv"
 
+# Profile definitions
+VALID_PROFILES = ("canonical", "engineering_legacy_3x", "synthetic_multiday")
+
+PROFILE_METADATA = {
+    "canonical": {
+        "purpose": (
+            "Original UCI Online Retail II dataset (1,067,371 rows, 2009-2011). "
+            "Used for business metric definition and standard data validation. "
+            "Dates are preserved as-is from the source."
+        ),
+        "limitations": (
+            "This is the original public dataset. Do not claim it represents "
+            "real enterprise business data."
+        ),
+    },
+    "engineering_legacy_3x": {
+        "purpose": (
+            "Engineering-scale validation for ETL, partitioning, scheduling, "
+            "idempotent reruns, and data-quality checks. Expanded rows are not "
+            "independent real-world transactions. This profile preserves the "
+            "historical engineering regression baseline."
+        ),
+        "limitations": (
+            "This profile uses 3x copies of source data with shifted dates. "
+            "Do not present results as real business outcomes."
+        ),
+    },
+    "synthetic_multiday": {
+        "purpose": (
+            "Multi-day partition validation for backfill, T+1 correction, "
+            "idempotency checks, and trend API/frontend verification. "
+            "Data is written to multiple dt partitions (2026-04-01 to 2026-04-07)."
+        ),
+        "limitations": (
+            "This profile is for engineering validation only. "
+            "Do not interpret multi-day results as real business trends."
+        ),
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -241,15 +281,15 @@ def build_dataset(args: argparse.Namespace) -> dict:
 
     output_sha256 = sha256_file(output_path)
 
+    # Get profile metadata
+    profile = getattr(args, "profile", "engineering_legacy_3x")
+    profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_legacy_3x"])
+
     manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "profile": "engineering_legacy_3x",
-        "purpose": (
-            "Engineering-scale validation for ETL, partitioning, scheduling, "
-            "idempotent reruns, and data-quality checks. Expanded rows are not "
-            "independent real-world transactions. This profile preserves the "
-            "historical engineering regression baseline."
-        ),
+        "profile": profile,
+        "purpose": profile_meta["purpose"],
+        "limitations": profile_meta["limitations"],
         "source": {
             "dataset": "Online Retail II",
             "direct_download_source": "Kaggle: mashlyn/online-retail-ii-uci",
@@ -328,6 +368,7 @@ def run_self_test() -> int:
             add_lineage_columns=False,
             manifest=str(manifest_csv1),
             overwrite=False,
+            profile="engineering_legacy_3x",
         )
 
         manifest1 = build_dataset(args1)
@@ -370,6 +411,7 @@ def run_self_test() -> int:
             add_lineage_columns=True,
             manifest=str(manifest_csv2),
             overwrite=False,
+            profile="engineering_legacy_3x",
         )
 
         manifest2 = build_dataset(args2)
@@ -386,6 +428,41 @@ def run_self_test() -> int:
         assert "source_row_id" in df2.columns, "source_row_id column missing in lineage mode"
 
         print("Self-test 2 PASSED: lineage mode")
+
+        # Test 3: Profile canonical (verify manifest uses correct profile metadata)
+        print("Running self-test 3: profile canonical...")
+        output_csv3 = test_dir / "test_output_canonical.csv"
+        manifest_csv3 = test_dir / "test_output_canonical.csv.manifest.json"
+
+        args3 = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv3),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv3),
+            overwrite=False,
+            profile="canonical",
+        )
+
+        manifest3 = build_dataset(args3)
+
+        assert output_csv3.exists(), "Output CSV not created (canonical profile)"
+        assert manifest_csv3.exists(), "Manifest not created (canonical profile)"
+
+        output_rows3 = manifest3["output"]["rows"]
+        assert output_rows3 == 3, f"Expected 3 rows (3 source × 1 copy), got {output_rows3}"
+
+        # Verify manifest uses canonical profile metadata
+        assert manifest3["profile"] == "canonical", "Manifest profile should be 'canonical'"
+        assert "Original UCI Online Retail II dataset" in manifest3["purpose"], "Canonical purpose metadata incorrect"
+        assert "Do not claim it represents real enterprise business data" in manifest3["limitations"], "Canonical limitations metadata incorrect"
+
+        print("Self-test 3 PASSED: profile canonical")
 
         print("\nALL SELF-TESTS PASSED")
         print("\nDefault mode manifest:")
@@ -427,6 +504,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help="Number of complete source copies to write (default: 3)",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=VALID_PROFILES,
+        default="engineering_legacy_3x",
+        help=(
+            "Data profile to generate. Determines purpose and limitations in manifest. "
+            f"Valid values: {', '.join(VALID_PROFILES)} (default: engineering_legacy_3x)"
+        ),
     )
     parser.add_argument(
         "--encoding",
