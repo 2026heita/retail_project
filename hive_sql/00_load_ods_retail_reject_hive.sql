@@ -3,7 +3,7 @@
 -- 功能: 将日期为空或日期格式无法解析的记录写入 ODS 异常表
 -- 说明:
 --   1. 数据来源为 ods_retail_raw_hive，不再直接读取源表 retail
---   2. 当前支持 yyyy-MM-dd HH:mm:ss 和 d/M/yyyy HH:mm:ss 两种日期格式
+--   2. 当前支持 yyyy-MM-dd H:mm:ss、yyyy-MM-dd H:mm、d/M/yyyy H:mm:ss、d/M/yyyy H:mm 四种日期格式
 --   3. 使用 INSERT OVERWRITE，保证同一批次重复执行不会产生重复数据
 -- =====================================================
 
@@ -41,7 +41,15 @@ WHERE batch_dt = '${hiveconf:bizdate}'
                ),
                UNIX_TIMESTAMP(
                    TRIM(invoicedate),
+                   'yyyy-MM-dd HH:mm'
+               ),
+               UNIX_TIMESTAMP(
+                   TRIM(invoicedate),
                    'd/M/yyyy HH:mm:ss'
+               ),
+               UNIX_TIMESTAMP(
+                   TRIM(invoicedate),
+                   'd/M/yyyy HH:mm'
                )
            ) IS NULL
       );

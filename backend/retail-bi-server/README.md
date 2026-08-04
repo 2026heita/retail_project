@@ -64,6 +64,8 @@ src/main/java/com/retail/bi/
 
 ## API 接口
 
+> 以下示例基于 `engineering_legacy_3x` 历史工程回归数据，用于接口与链路验证，不代表真实企业经营数据。
+
 ### 1. 健康检查
 
 ```
@@ -99,10 +101,10 @@ GET /api/v1/dashboard/overview?date=2026-04-08
   "data": {
     "dt": "2026-04-08",
     "totalSales": 53230287.48,
-    "totalOrders": 36970,
+    "totalOrders": 36969,
     "totalCustomers": 5878,
     "totalQuantity": 32118447,
-    "avgOrderValue": 1439.82,
+    "avgOrderValue": 1439.86,
     "sourceSystem": "hive_ads"
   },
   "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -204,10 +206,10 @@ changePercent = (current - previous) / previous × 100
     "current": {
       "dt": "2026-04-08",
       "totalSales": 53230287.48,
-      "totalOrders": 36970,
+      "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1439.82,
+      "avgOrderValue": 1439.86,
       "sourceSystem": "hive_ads"
     },
     "previous": {
@@ -244,10 +246,10 @@ changePercent = (current - previous) / previous × 100
     "current": {
       "dt": "2026-04-08",
       "totalSales": 53230287.48,
-      "totalOrders": 36970,
+      "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1439.82,
+      "avgOrderValue": 1439.86,
       "sourceSystem": "hive_ads"
     },
     "previous": null,
@@ -271,10 +273,10 @@ changePercent = (current - previous) / previous × 100
 
 ```bash
 # 数据库连接
-RETAIL_DB_HOST=192.168.85.100        # MySQL 主机地址
+RETAIL_DB_HOST=localhost              # MySQL 主机地址（默认 localhost）
 RETAIL_DB_PORT=3306                   # MySQL 端口（默认 3306）
 RETAIL_DB_NAME=retail_bi              # 数据库名
-RETAIL_DB_USERNAME=retail_api_user    # 数据库用户名
+RETAIL_DB_USERNAME=retail_api_user     # 数据库用户名
 RETAIL_DB_PASSWORD=<YOUR_PASSWORD>    # 数据库密码
 
 # 服务配置
@@ -283,7 +285,7 @@ SERVER_PORT=8080                      # 服务端口（默认 8080）
 
 **注意：**
 - 密码必须通过环境变量传入，不要硬编码
-- 默认数据库地址为 `192.168.85.100`，可通过 `RETAIL_DB_HOST` 覆盖
+- 默认数据库地址为 `localhost`，可通过 `RETAIL_DB_HOST` 覆盖为实际服务器地址
 - 生产环境应使用独立的数据库账号和权限
 - 不同环境部署时，应根据实际网络调整 MySQL 用户授权网段（参见 `mysql/02_create_retail_bi_users.local.sql`）
 
@@ -336,10 +338,10 @@ java -jar target/retail-bi-server-0.0.1-SNAPSHOT.jar
 # 健康检查
 curl http://localhost:8080/api/v1/health
 
-# 单日概览（2026-04-08 是真实回归日）
+# 单日概览（2026-04-08 是历史工程回归日）
 curl "http://localhost:8080/api/v1/dashboard/overview?date=2026-04-08"
 
-# 趋势查询（2026-04-01 至 2026-04-07 主要是趋势链路演示数据）
+# 趋势查询（2026-04-01 至 2026-04-07 是多日期链路验证数据）
 curl "http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08"
 ```
 
@@ -422,8 +424,8 @@ CREATE TABLE bi_sales_overview_daily (
 
 ## 演示数据说明
 
-- **2026-04-08**：真实回归日，核心验证基线
-- **2026-04-01 至 2026-04-07**：趋势链路演示数据，用于验证多日期查询
+- **2026-04-08**：历史工程回归日，核心验证基线
+- **2026-04-01 至 2026-04-07**：多日期链路验证数据，用于验证多日期查询
 
 演示数据不代表真实业务连续性，仅用于工程验证。
 

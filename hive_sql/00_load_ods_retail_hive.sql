@@ -4,7 +4,7 @@
 -- 说明:
 --   1. 不再直接读取源表 retail
 --   2. 数据统一从 ods_retail_raw_hive 进入正常 ODS 链路
---   3. 日期解析兼容 yyyy-MM-dd HH:mm:ss 和 d/M/yyyy HH:mm:ss
+--   3. 日期解析兼容 yyyy-MM-dd H:mm:ss、yyyy-MM-dd H:mm、d/M/yyyy H:mm:ss、d/M/yyyy H:mm
 --   4. 日期为空或解析失败的数据不会进入正常 ODS
 --   5. 异常日期数据由 ods_retail_reject_hive 保存
 --   6. 使用 INSERT OVERWRITE 保证同一业务日期重复执行结果一致
@@ -27,7 +27,15 @@ WITH parsed_source AS (
             ),
             UNIX_TIMESTAMP(
                 TRIM(invoicedate),
+                'yyyy-MM-dd HH:mm'
+            ),
+            UNIX_TIMESTAMP(
+                TRIM(invoicedate),
                 'd/M/yyyy HH:mm:ss'
+            ),
+            UNIX_TIMESTAMP(
+                TRIM(invoicedate),
+                'd/M/yyyy HH:mm'
             )
         ) AS invoice_timestamp
     FROM ods_retail_raw_hive

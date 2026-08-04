@@ -24,19 +24,32 @@ WITH base AS (
     SELECT
         country,
         invoice,
+        stockcode,
         customerid,
+        invoicedate,
         CAST(COALESCE(quantity,0) * COALESCE(price,0) AS DECIMAL(14,2)) AS amount
     FROM dwd_retail_clean_hive
     WHERE dt='${hiveconf:bizdate}'
 ),
 
--- 1. 对严重倾斜的 United Kingdom 做 salt
+-- 1. 对严重倾斜的 United Kingdom 做确定性 salt
+--    使用 CRC32 基于稳定业务字段生成盐值，保证同一记录每次执行得到相同盐值
 sales_salted AS (
     SELECT
         country,
         CASE
             WHEN country = 'United Kingdom'
-            THEN CAST(FLOOR(RAND() * 20) AS INT)
+            THEN PMOD(
+                CRC32(
+                    CONCAT_WS('#|#',
+                        COALESCE(invoice, ''),
+                        COALESCE(stockcode, ''),
+                        COALESCE(customerid, ''),
+                        COALESCE(invoicedate, '')
+                    )
+                ),
+                20
+            )
             ELSE 0
         END AS salt_key,
         amount

@@ -515,7 +515,7 @@ dim_user 总版本数：5,878
 不要说：
 
 ```text
-已经用真实连续多天属性变化完整验证了所有 SCD2 场景
+已经用连续多天属性变化完整验证了所有 SCD2 场景
 ```
 
 目前没有足够证据支持这个说法。
@@ -777,7 +777,7 @@ MySQL 调度流程：
 ```text
 零售数据分析 MySQL 到 Hive 离线数仓迁移
 
-- 基于 320 万级零售订单数据，将 MySQL 分析链路迁移到 Hive，构建 ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS 和星型模型。
+- 基于约 320 万行工程扩展零售订单数据，将 MySQL 分析链路迁移到 Hive，构建 ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS 和星型模型。
 - 设计 Raw 原始保真和 Reject 日期异常分流，使用 batch_dt 与 dt 区分处理批次和业务日期；通过三组行数对账和 ASSERT_TRUE 构建 ODS 入仓完整性门禁。
 - 使用 ORC、日期分区、bizdate 参数和 INSERT OVERWRITE 支持指定日期重跑，并实现区间回刷、T+1 修正和分阶段局部重跑。
 - 建立 DWD 6 条、DWS/ADS 11 条和星型模型 12 条质量规则；BLOCK 失败时 Shell 返回非零状态，阻断下游任务。

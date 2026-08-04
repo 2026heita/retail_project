@@ -15,8 +15,10 @@
 # Temporary and backup files
 *.tmp
 *.bak
+*.backup
 *.swp
 *~
+.prepare_engineering_*
 
 # Compressed and packaged files
 *.zip
@@ -32,6 +34,13 @@
 *.conf
 db_config.*
 config_local.*
+
+# Full-size data files (never commit to Git)
+data/raw/*
+!data/raw/.gitkeep
+data/generated/*
+!data/generated/.gitkeep
+*.manifest.json
 
 # OS / editor files
 .DS_Store

@@ -80,7 +80,7 @@ hive -e "SHOW DATABASES;"
 ```text
 retail_hive_project/
 ├── hive/
-├── sample_data/
+├── data/sample/
 ├── docs/
 └── logs/
 ```
@@ -107,7 +107,7 @@ hive/
 
 ```text
 hive_sql/           → 服务器的 hive/
-sample_data/
+data/sample/
 docs/
 ```
 
@@ -135,7 +135,7 @@ bash -n /home/your_user/retail_hive_project/hive/check_scd2_backfill_guard.sh
 样例文件：
 
 ```text
-sample_data/retail_sample.csv
+data/sample/retail_sample.csv
 ```
 
 当前样例共 35 条数据，主要业务日期为：
@@ -181,7 +181,7 @@ DROP TABLE IF EXISTS retail PURGE;
 cd /home/your_user/retail_hive_project/hive
 
 hive \
-  --hiveconf source_file=/home/your_user/retail_hive_project/sample_data/retail_sample.csv \
+  --hiveconf source_file=/home/your_user/retail_hive_project/data/sample/retail_sample.csv \
   -f 00_bootstrap_sample_source_hive.sql
 ```
 
@@ -558,7 +558,7 @@ Hive 中没有创建源表，只有 MySQL 中存在同名表。
 
 ```bash
 hive \
-  --hiveconf source_file=/home/your_user/retail_hive_project/sample_data/retail_sample.csv \
+  --hiveconf source_file=/home/your_user/retail_hive_project/data/sample/retail_sample.csv \
   -f /home/your_user/retail_hive_project/hive/00_bootstrap_sample_source_hive.sql
 ```
 
