@@ -64,6 +64,9 @@ DEFAULT_ENCODING = "latin-1"
 DEFAULT_CHUNKSIZE = 100_000
 DEFAULT_OUTPUT_NAME = "retail_engineering_reproducible_3x.csv"
 
+# For testing rollback mechanism
+_TEST_COMMIT_FAILURE_AFTER_CSV = False
+
 # Profile definitions
 # Note: engineering_legacy_3x is reserved for describing existing historical 3.2M files,
 # not for generating new datasets. Use engineering_reproducible for new generations.
@@ -223,12 +226,55 @@ def build_dataset(args: argparse.Namespace) -> dict:
         encoding=args.encoding,
     )
 
-    if output_path.exists() and not args.overwrite:
+    # Check if either output file exists
+    csv_exists = output_path.exists()
+    manifest_exists = manifest_path.exists()
+
+    if (csv_exists or manifest_exists) and not args.overwrite:
+        existing = []
+        if csv_exists:
+            existing.append(str(output_path))
+        if manifest_exists:
+            existing.append(str(manifest_path))
         raise FileExistsError(
-            f"Output already exists: {output_path}. Use --overwrite to replace it."
+            f"Output file(s) already exist: {', '.join(existing)}. "
+            f"Use --overwrite to replace them."
         )
 
-    # Write CSV to a temporary file first
+    # Create backups FIRST (before any temp file operations)
+    csv_backup = None
+    manifest_backup = None
+
+    if args.overwrite:
+        try:
+            if csv_exists:
+                csv_backup_fd, csv_backup_path = tempfile.mkstemp(
+                    suffix=".csv.backup",
+                    prefix=".prepare_engineering_",
+                    dir=str(output_path.parent),
+                )
+                os.close(csv_backup_fd)
+                csv_backup = Path(csv_backup_path)
+                shutil.copy2(output_path, csv_backup)
+
+            if manifest_exists:
+                manifest_backup_fd, manifest_backup_path = tempfile.mkstemp(
+                    suffix=".manifest.json.backup",
+                    prefix=".prepare_engineering_",
+                    dir=str(manifest_path.parent),
+                )
+                os.close(manifest_backup_fd)
+                manifest_backup = Path(manifest_backup_path)
+                shutil.copy2(manifest_path, manifest_backup)
+        except Exception as e:
+            # Clean up any backups that were created
+            if csv_backup and csv_backup.exists():
+                csv_backup.unlink()
+            if manifest_backup and manifest_backup.exists():
+                manifest_backup.unlink()
+            raise RuntimeError(f"Failed to create backups: {e}")
+
+    # Write CSV to a temporary file
     csv_tmp_fd, csv_tmp_path = tempfile.mkstemp(
         suffix=".csv",
         prefix=".prepare_engineering_csv_",
@@ -237,7 +283,7 @@ def build_dataset(args: argparse.Namespace) -> dict:
     os.close(csv_tmp_fd)
     csv_tmp_file = Path(csv_tmp_path)
 
-    # Write manifest to a temporary file first
+    # Write manifest to a temporary file
     manifest_tmp_fd, manifest_tmp_path = tempfile.mkstemp(
         suffix=".manifest.json",
         prefix=".prepare_engineering_manifest_",
@@ -345,12 +391,47 @@ def build_dataset(args: argparse.Namespace) -> dict:
             encoding="utf-8",
         )
 
-        # Both CSV and manifest temp files are ready, atomically replace
-        csv_tmp_file.replace(output_path)
-        manifest_tmp_file.replace(manifest_path)
+        # Rollback-safe replacement
+        try:
+            # Test hook: simulate failure after CSV replacement
+            if _TEST_COMMIT_FAILURE_AFTER_CSV:
+                csv_tmp_file.replace(output_path)
+                raise RuntimeError("Simulated manifest commit failure")
 
-    except Exception:
-        # Clean up both temp files on any failure
+            # Replace files
+            csv_tmp_file.replace(output_path)
+            manifest_tmp_file.replace(manifest_path)
+
+            # Success: delete backups
+            if csv_backup and csv_backup.exists():
+                csv_backup.unlink()
+            if manifest_backup and manifest_backup.exists():
+                manifest_backup.unlink()
+
+        except Exception as e:
+            # Rollback: restore from backups if they exist
+            if csv_backup and csv_backup.exists():
+                if output_path.exists():
+                    output_path.unlink()
+                shutil.copy2(csv_backup, output_path)
+                csv_backup.unlink()
+
+            if manifest_backup and manifest_backup.exists():
+                if manifest_path.exists():
+                    manifest_path.unlink()
+                shutil.copy2(manifest_backup, manifest_path)
+                manifest_backup.unlink()
+
+            # Clean up temp files if they still exist
+            if csv_tmp_file.exists():
+                csv_tmp_file.unlink()
+            if manifest_tmp_file.exists():
+                manifest_tmp_file.unlink()
+
+            raise RuntimeError(f"Failed to commit files, rolled back to previous state: {e}")
+
+    except Exception as e:
+        # Clean up temp files on any failure
         if csv_tmp_file.exists():
             csv_tmp_file.unlink()
         if manifest_tmp_file.exists():
@@ -578,6 +659,160 @@ def run_self_test() -> int:
         except NotImplementedError as exc:
             assert "not yet implemented" in str(exc), f"Expected not implemented error, got: {exc}"
         print("Self-test 6 PASSED: synthetic_multiday rejected")
+
+        # Test 7: Manifest commit failure rollback
+        print("Running self-test 7: manifest commit failure rollback...")
+        output_csv7 = test_dir / "test_output_rollback.csv"
+        manifest_csv7 = test_dir / "test_output_rollback.csv.manifest.json"
+
+        # Create initial files
+        args7_init = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv7),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv7),
+            overwrite=False,
+            profile="engineering_reproducible",
+        )
+        build_dataset(args7_init)
+
+        # Record original content
+        original_csv_content = output_csv7.read_bytes()
+        original_manifest_content = manifest_csv7.read_bytes()
+
+        # Enable test hook to simulate failure
+        global _TEST_COMMIT_FAILURE_AFTER_CSV
+        _TEST_COMMIT_FAILURE_AFTER_CSV = True
+
+        try:
+            args7_overwrite = argparse.Namespace(
+                input=str(input_csv),
+                output=str(output_csv7),
+                copies=2,  # Different to verify rollback
+                encoding="utf-8",
+                chunksize=2,
+                date_column=DEFAULT_DATE_COLUMN,
+                shift_years=0,
+                normalize_whitespace=True,
+                add_lineage_columns=False,
+                manifest=str(manifest_csv7),
+                overwrite=True,
+                profile="engineering_reproducible",
+            )
+
+            try:
+                build_dataset(args7_overwrite)
+                raise AssertionError("Should have raised RuntimeError due to simulated failure")
+            except RuntimeError as exc:
+                assert "Simulated manifest commit failure" in str(exc)
+
+            # Verify rollback: files should be restored to original state
+            assert output_csv7.exists(), "CSV should exist after rollback"
+            assert manifest_csv7.exists(), "Manifest should exist after rollback"
+
+            restored_csv_content = output_csv7.read_bytes()
+            restored_manifest_content = manifest_csv7.read_bytes()
+
+            assert restored_csv_content == original_csv_content, "CSV should be restored to original"
+            assert restored_manifest_content == original_manifest_content, "Manifest should be restored to original"
+
+            # Verify no residual temp files or backups
+            temp_files = list(test_dir.glob(".prepare_engineering_*"))
+            assert len(temp_files) == 0, f"No temp files should remain, found: {temp_files}"
+
+            print("Self-test 7 PASSED: manifest commit failure rollback")
+        finally:
+            _TEST_COMMIT_FAILURE_AFTER_CSV = False
+
+        # Test 8: Reject overwrite when either file exists
+        print("Running self-test 8: reject overwrite when either file exists...")
+
+        # Test 8a: Only CSV exists
+        output_csv8a = test_dir / "test_output_no_overwrite_csv.csv"
+        manifest_csv8a = test_dir / "test_output_no_overwrite_csv.csv.manifest.json"
+        output_csv8a.write_text("dummy", encoding="utf-8")
+
+        args8a = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv8a),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv8a),
+            overwrite=False,
+            profile="engineering_reproducible",
+        )
+
+        try:
+            build_dataset(args8a)
+            raise AssertionError("Should have raised FileExistsError when only CSV exists")
+        except FileExistsError as exc:
+            assert "already exist" in str(exc)
+
+        # Test 8b: Only manifest exists
+        output_csv8b = test_dir / "test_output_no_overwrite_manifest.csv"
+        manifest_csv8b = test_dir / "test_output_no_overwrite_manifest.csv.manifest.json"
+        manifest_csv8b.write_text("{}", encoding="utf-8")
+
+        args8b = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv8b),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv8b),
+            overwrite=False,
+            profile="engineering_reproducible",
+        )
+
+        try:
+            build_dataset(args8b)
+            raise AssertionError("Should have raised FileExistsError when only manifest exists")
+        except FileExistsError as exc:
+            assert "already exist" in str(exc)
+
+        # Test 8c: Both files exist
+        output_csv8c = test_dir / "test_output_no_overwrite_both.csv"
+        manifest_csv8c = test_dir / "test_output_no_overwrite_both.csv.manifest.json"
+        output_csv8c.write_text("dummy", encoding="utf-8")
+        manifest_csv8c.write_text("{}", encoding="utf-8")
+
+        args8c = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv8c),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv8c),
+            overwrite=False,
+            profile="engineering_reproducible",
+        )
+
+        try:
+            build_dataset(args8c)
+            raise AssertionError("Should have raised FileExistsError when both files exist")
+        except FileExistsError as exc:
+            assert "already exist" in str(exc)
+
+        print("Self-test 8 PASSED: reject overwrite when either file exists")
 
         print("\nALL SELF-TESTS PASSED")
         print("\nDefault mode manifest:")
