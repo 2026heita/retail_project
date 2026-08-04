@@ -773,11 +773,23 @@ React BI 前端项目已实现零售 BI 数据连接器，完整闭环：
 Hive ADS → Shell 同步 → MySQL → Spring Boot API → React 前端展示
 ```
 
-| 截图 | 说明 |
-|---|---|
-| [BI Connector 接入成功](docs/result_screenshots/10_retail_bi_connector_success.png) | 外部数据源折叠面板展开，API 地址和日期范围配置完成 |
-| [单日经营概览与日环比](docs/result_screenshots/11_retail_bi_overview_comparison.png) | 五个核心 KPI 卡片 + 日环比变化百分比 |
-| [多日趋势分析](docs/result_screenshots/12_retail_bi_sales_trend.png) | 时间趋势折线图展示销售额、订单数等指标变化 |
+#### 1. BI Connector 接入成功
+
+![BI Connector 接入成功](docs/result_screenshots/10_retail_bi_connector_success.png)
+
+> React BI 前端项目配置 API 地址和日期范围后，成功加载零售经营指标数据。
+
+#### 2. 单日经营概览与日环比
+
+![单日经营概览与日环比](docs/result_screenshots/11_retail_bi_overview_comparison.png)
+
+> 展示总销售额、总订单数、总客户数、总销售数量和平均订单价值，并计算前一自然日环比。
+
+#### 3. 多日销售趋势
+
+![多日销售趋势](docs/result_screenshots/12_retail_bi_sales_trend.png)
+
+> 复用前端通用时间趋势分析能力，截图以总销售额指标为例。
 
 ---
 
