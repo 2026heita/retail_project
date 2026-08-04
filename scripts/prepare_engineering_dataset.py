@@ -297,6 +297,14 @@ def build_dataset(args: argparse.Namespace) -> dict:
         output_rows = 0
         global_source_row_id = 0
 
+        # Date range statistics
+        source_earliest_date = None
+        source_latest_date = None
+        source_parseable_rows = 0
+        source_unparseable_rows = 0
+        output_earliest_date = None
+        output_latest_date = None
+
         for copy_id in range(1, args.copies + 1):
             global_source_row_id = 0
 
@@ -310,6 +318,22 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 if args.normalize_whitespace:
                     frame = normalize_text_columns(frame)
 
+                # Collect source date statistics (only on first copy to avoid duplication)
+                if copy_id == 1 and args.date_column in frame.columns:
+                    dates = pd.to_datetime(frame[args.date_column], errors="coerce")
+                    parseable_mask = dates.notna()
+                    source_parseable_rows += int(parseable_mask.sum())
+                    source_unparseable_rows += int((~parseable_mask).sum())
+
+                    if parseable_mask.any():
+                        chunk_min = dates[parseable_mask].min()
+                        chunk_max = dates[parseable_mask].max()
+
+                        if source_earliest_date is None or chunk_min < source_earliest_date:
+                            source_earliest_date = chunk_min
+                        if source_latest_date is None or chunk_max > source_latest_date:
+                            source_latest_date = chunk_max
+
                 if args.shift_years:
                     if args.date_column not in frame.columns:
                         raise KeyError(
@@ -317,6 +341,20 @@ def build_dataset(args: argparse.Namespace) -> dict:
                             f"Available columns: {list(frame.columns)}"
                         )
                     frame = shift_dates(frame, args.date_column, args.shift_years)
+
+                # Collect output date statistics (only on first copy to avoid duplication)
+                if copy_id == 1 and args.date_column in frame.columns:
+                    output_dates = pd.to_datetime(frame[args.date_column], errors="coerce")
+                    output_parseable = output_dates.notna()
+
+                    if output_parseable.any():
+                        out_chunk_min = output_dates[output_parseable].min()
+                        out_chunk_max = output_dates[output_parseable].max()
+
+                        if output_earliest_date is None or out_chunk_min < output_earliest_date:
+                            output_earliest_date = out_chunk_min
+                        if output_latest_date is None or out_chunk_max > output_latest_date:
+                            output_latest_date = out_chunk_max
 
                 if args.add_lineage_columns:
                     row_count = len(frame)
@@ -351,6 +389,21 @@ def build_dataset(args: argparse.Namespace) -> dict:
         # Get profile metadata
         profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_reproducible"])
 
+        # Format date range for manifest
+        source_date_range = {}
+        if source_earliest_date is not None:
+            source_date_range["earliest_invoice_date"] = source_earliest_date.strftime("%Y-%m-%d")
+        if source_latest_date is not None:
+            source_date_range["latest_invoice_date"] = source_latest_date.strftime("%Y-%m-%d")
+        source_date_range["parseable_date_rows"] = source_parseable_rows
+        source_date_range["unparseable_date_rows"] = source_unparseable_rows
+
+        output_date_range = {}
+        if output_earliest_date is not None:
+            output_date_range["earliest_invoice_date"] = output_earliest_date.strftime("%Y-%m-%d")
+        if output_latest_date is not None:
+            output_date_range["latest_invoice_date"] = output_latest_date.strftime("%Y-%m-%d")
+
         manifest = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "profile": profile,
@@ -364,6 +417,7 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 "sha256": source_sha256,
                 "rows": source_rows,
                 "encoding": args.encoding,
+                **source_date_range,
             },
             "generation": {
                 "copies": args.copies,
@@ -382,6 +436,7 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 "sha256": output_sha256,
                 "rows": output_rows,
                 "encoding": "utf-8",
+                **output_date_range,
             },
         }
 
@@ -409,18 +464,28 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 manifest_backup.unlink()
 
         except Exception as e:
-            # Rollback: restore from backups if they exist
+            # Rollback: restore to pre-execution state
+            # If file existed before: restore from backup
+            # If file did not exist before: delete the new file
             if csv_backup and csv_backup.exists():
+                # File existed before, restore from backup
                 if output_path.exists():
                     output_path.unlink()
                 shutil.copy2(csv_backup, output_path)
                 csv_backup.unlink()
+            elif not csv_exists and output_path.exists():
+                # File did not exist before, delete the new file
+                output_path.unlink()
 
             if manifest_backup and manifest_backup.exists():
+                # File existed before, restore from backup
                 if manifest_path.exists():
                     manifest_path.unlink()
                 shutil.copy2(manifest_backup, manifest_path)
                 manifest_backup.unlink()
+            elif not manifest_exists and manifest_path.exists():
+                # File did not exist before, delete the new file
+                manifest_path.unlink()
 
             # Clean up temp files if they still exist
             if csv_tmp_file.exists():
@@ -813,6 +878,54 @@ def run_self_test() -> int:
             assert "already exist" in str(exc)
 
         print("Self-test 8 PASSED: reject overwrite when either file exists")
+
+        # Test 9: First-time generation with manifest commit failure
+        print("Running self-test 9: first-time generation with manifest commit failure...")
+        output_csv9 = test_dir / "test_output_first_time.csv"
+        manifest_csv9 = test_dir / "test_output_first_time.csv.manifest.json"
+
+        # Ensure files do not exist
+        if output_csv9.exists():
+            output_csv9.unlink()
+        if manifest_csv9.exists():
+            manifest_csv9.unlink()
+
+        # Enable test hook to simulate failure (global already declared in test 7)
+        _TEST_COMMIT_FAILURE_AFTER_CSV = True
+
+        try:
+            args9 = argparse.Namespace(
+                input=str(input_csv),
+                output=str(output_csv9),
+                copies=1,
+                encoding="utf-8",
+                chunksize=2,
+                date_column=DEFAULT_DATE_COLUMN,
+                shift_years=0,
+                normalize_whitespace=True,
+                add_lineage_columns=False,
+                manifest=str(manifest_csv9),
+                overwrite=False,
+                profile="engineering_reproducible",
+            )
+
+            try:
+                build_dataset(args9)
+                raise AssertionError("Should have raised RuntimeError due to simulated failure")
+            except RuntimeError as exc:
+                assert "Simulated manifest commit failure" in str(exc)
+
+            # Verify rollback: files should not exist
+            assert not output_csv9.exists(), "CSV should not exist after rollback"
+            assert not manifest_csv9.exists(), "Manifest should not exist after rollback"
+
+            # Verify no residual temp files or backups
+            temp_files = list(test_dir.glob(".prepare_engineering_*"))
+            assert len(temp_files) == 0, f"No temp files should remain, found: {temp_files}"
+
+            print("Self-test 9 PASSED: first-time generation with manifest commit failure")
+        finally:
+            _TEST_COMMIT_FAILURE_AFTER_CSV = False
 
         print("\nALL SELF-TESTS PASSED")
         print("\nDefault mode manifest:")

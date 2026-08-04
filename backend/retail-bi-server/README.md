@@ -64,6 +64,8 @@ src/main/java/com/retail/bi/
 
 ## API 接口
 
+> 以下示例基于 `engineering_legacy_3x` 历史工程回归数据，用于接口与链路验证，不代表真实企业经营数据。
+
 ### 1. 健康检查
 
 ```

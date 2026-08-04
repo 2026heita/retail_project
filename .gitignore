@@ -15,8 +15,10 @@
 # Temporary and backup files
 *.tmp
 *.bak
+*.backup
 *.swp
 *~
+.prepare_engineering_*
 
 # Compressed and packaged files
 *.zip
