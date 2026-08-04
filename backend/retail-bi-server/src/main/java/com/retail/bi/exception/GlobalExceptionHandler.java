@@ -8,9 +8,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 全局异常处理器。
@@ -143,6 +145,33 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(
                         400,
                         "请求体格式错误或缺失",
+                        requestId
+                ));
+    }
+
+    /**
+     * 处理未知路由（404）。
+     *
+     * 例如：访问 / 或 /api/v1/not-found 等不存在的端点。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(
+            NoResourceFoundException exception,
+            HttpServletRequest request) {
+
+        String requestId = getRequestId(request);
+
+        log.warn(
+                "未知路由，path={}, requestId={}",
+                request.getRequestURI(),
+                requestId
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error(
+                        HttpStatus.NOT_FOUND.value(),
+                        "接口不存在",
                         requestId
                 ));
     }
