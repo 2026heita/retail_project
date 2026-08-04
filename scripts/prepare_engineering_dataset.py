@@ -13,14 +13,21 @@ Key design decisions:
 - Preserves original transaction dates by default (no forced date shift).
 - Does NOT default to compressing all data into a single date.
 - Automatically generates a JSON manifest with checksums and row counts.
-- Default output filename: retail_engineering_reproducible_3x.csv
-  (never overwrites the existing legacy data/generated/retail.csv by default).
+- Default output filename is dynamically generated based on profile:
+  - canonical: retail_canonical.csv
+  - engineering_reproducible: retail_engineering_reproducible_<copies>x.csv
 - Default output contains the original 8 business columns only.
 - Lineage columns (source_copy_id, source_row_id) are opt-in via
   --add-lineage-columns. When enabled, the Hive source table DDL must be
   updated to include these extra columns before loading.
 - Includes a minimal self-test (--self-test) that runs on a small inline
   sample without requiring external files.
+
+Profile rules:
+- canonical: copies=1, shift_years=0, no normalize-whitespace, no lineage columns
+  Output is byte-level copy of source, SHA256 must match.
+- engineering_reproducible: allows copies and optional date shift
+- synthetic_multiday: removed from valid profiles (historical data only)
 
 Recommended default usage:
   python scripts/prepare_engineering_dataset.py \
@@ -48,6 +55,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -62,22 +70,24 @@ DEFAULT_DATE_COLUMN = "InvoiceDate"
 TEXT_COLUMNS = ("Invoice", "StockCode", "Description", "Customer ID", "Country")
 DEFAULT_ENCODING = "latin-1"
 DEFAULT_CHUNKSIZE = 100_000
-DEFAULT_OUTPUT_NAME = "retail_engineering_reproducible_3x.csv"
 
 # For testing rollback mechanism
 _TEST_COMMIT_FAILURE_AFTER_CSV = False
+_TEST_GENERATION_FAILURE = False
 
 # Profile definitions
 # Note: engineering_legacy_3x is reserved for describing existing historical 3.2M files,
 # not for generating new datasets. Use engineering_reproducible for new generations.
-VALID_PROFILES = ("canonical", "engineering_reproducible", "synthetic_multiday")
+# synthetic_multiday is removed from valid profiles (historical data only, documented in README)
+VALID_PROFILES = ("canonical", "engineering_reproducible")
 
 PROFILE_METADATA = {
     "canonical": {
         "purpose": (
             "Original UCI Online Retail II dataset (1,067,371 rows, 2009-2011). "
             "Used for business metric definition and standard data validation. "
-            "Dates are preserved as-is from the source."
+            "Dates are preserved as-is from the source. "
+            "Output is byte-level copy, SHA256 matches source."
         ),
         "limitations": (
             "This is the original public dataset. Do not claim it represents "
@@ -91,22 +101,85 @@ PROFILE_METADATA = {
             "independent real-world transactions."
         ),
         "limitations": (
-            "This profile uses copies of source data with shifted dates. "
+            "This profile uses copies of source data with optional date shift. "
             "Do not present results as real business outcomes."
         ),
     },
-    "synthetic_multiday": {
-        "purpose": (
-            "Multi-day partition validation for backfill, T+1 correction, "
-            "idempotency checks, and trend API/frontend verification. "
-            "Data is written to multiple dt partitions (2026-04-01 to 2026-04-07)."
-        ),
-        "limitations": (
-            "This profile is for engineering validation only. "
-            "Do not interpret multi-day results as real business trends."
-        ),
-    },
 }
+
+
+# ---------------------------------------------------------------------------
+# Date parsing utilities
+# ---------------------------------------------------------------------------
+
+
+def parse_invoice_date(date_str: str) -> datetime | None:
+    """Parse InvoiceDate with explicit format detection.
+
+    Supported formats (based on actual CSV audit):
+    - yyyy-MM-dd H:mm:ss (primary, all 1,067,371 rows)
+    - yyyy-MM-dd H:mm (without seconds)
+    - d/M/yyyy H:mm:ss (day/month format)
+    - d/M/yyyy H:mm (day/month without seconds)
+
+    Returns None if parsing fails.
+    """
+    if not date_str or not isinstance(date_str, str):
+        return None
+
+    date_str = date_str.strip()
+    if not date_str:
+        return None
+
+    # Try yyyy-MM-dd H:mm:ss (primary format)
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$", date_str):
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    # Try yyyy-MM-dd H:mm (without seconds)
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}$", date_str):
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+        except ValueError:
+            return None
+
+    # Try d/M/yyyy H:mm:ss (day/month format)
+    if re.match(r"^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$", date_str):
+        try:
+            return datetime.strptime(date_str, "%d/%m/%Y %H:%M:%S")
+        except ValueError:
+            return None
+
+    # Try d/M/yyyy H:mm (day/month without seconds)
+    if re.match(r"^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}$", date_str):
+        try:
+            return datetime.strptime(date_str, "%d/%m/%Y %H:%M")
+        except ValueError:
+            return None
+
+    # Unknown format
+    return None
+
+
+def parse_date_column(series: pd.Series) -> tuple[pd.Series, int, int]:
+    """Parse a date column using explicit format detection.
+
+    Returns:
+        - parsed_dates: pd.Series of datetime objects (NaT for failures)
+        - parseable_count: number of successfully parsed dates
+        - unparseable_count: number of failed parses
+    """
+    parsed = series.apply(parse_invoice_date)
+    parsed_dates = pd.to_datetime(parsed, errors="coerce")
+
+    parseable_mask = parsed_dates.notna()
+    parseable_count = int(parseable_mask.sum())
+    unparseable_count = int((~parseable_mask).sum())
+
+    return parsed_dates, parseable_count, unparseable_count
+
 
 # ---------------------------------------------------------------------------
 # Utility helpers
@@ -134,20 +207,23 @@ def normalize_text_columns(frame: pd.DataFrame) -> pd.DataFrame:
 def shift_dates(frame: pd.DataFrame, date_column: str, years: int) -> pd.DataFrame:
     """Shift every timestamp in *date_column* by *years* years.
 
+    Uses unified date parsing function.
     Raises ValueError if any value cannot be parsed.
     """
     if years == 0:
         return frame
 
-    parsed = pd.to_datetime(frame[date_column], errors="coerce")
-    invalid_count = int(parsed.isna().sum())
-    if invalid_count:
+    parsed_dates, parseable_count, unparseable_count = parse_date_column(
+        frame[date_column]
+    )
+
+    if unparseable_count > 0:
         raise ValueError(
-            f"{date_column!r} contains {invalid_count} unparseable values; "
+            f"{date_column!r} contains {unparseable_count} unparseable values; "
             "refusing to shift dates silently."
         )
 
-    shifted = parsed + pd.DateOffset(years=years)
+    shifted = parsed_dates + pd.DateOffset(years=years)
     frame[date_column] = shifted.dt.strftime("%Y-%m-%d %H:%M:%S")
     return frame
 
@@ -174,6 +250,16 @@ def count_rows(input_path: Path, *, chunksize: int, encoding: str) -> int:
     for chunk in iter_chunks(input_path, chunksize=chunksize, encoding=encoding):
         total += len(chunk)
     return total
+
+
+def get_default_output_name(profile: str, copies: int) -> str:
+    """Generate default output filename based on profile."""
+    if profile == "canonical":
+        return "retail_canonical.csv"
+    elif profile == "engineering_reproducible":
+        return f"retail_engineering_reproducible_{copies}x.csv"
+    else:
+        raise ValueError(f"Unknown profile: {profile}")
 
 
 # ---------------------------------------------------------------------------
@@ -209,12 +295,16 @@ def build_dataset(args: argparse.Namespace) -> dict:
             raise ValueError(
                 f"canonical profile requires shift_years=0, got shift_years={args.shift_years}"
             )
-    elif profile == "synthetic_multiday":
-        raise NotImplementedError(
-            "synthetic_multiday profile is not yet implemented. "
-            "This profile requires explicit date simulation parameters "
-            "(e.g., --start-date, --end-date) which are not currently supported."
-        )
+        if args.normalize_whitespace:
+            raise ValueError(
+                "canonical profile forbids --normalize-whitespace; "
+                "output must be byte-level copy of source"
+            )
+        if args.add_lineage_columns:
+            raise ValueError(
+                "canonical profile forbids --add-lineage-columns; "
+                "output must be byte-level copy of source"
+            )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,39 +331,6 @@ def build_dataset(args: argparse.Namespace) -> dict:
             f"Use --overwrite to replace them."
         )
 
-    # Create backups FIRST (before any temp file operations)
-    csv_backup = None
-    manifest_backup = None
-
-    if args.overwrite:
-        try:
-            if csv_exists:
-                csv_backup_fd, csv_backup_path = tempfile.mkstemp(
-                    suffix=".csv.backup",
-                    prefix=".prepare_engineering_",
-                    dir=str(output_path.parent),
-                )
-                os.close(csv_backup_fd)
-                csv_backup = Path(csv_backup_path)
-                shutil.copy2(output_path, csv_backup)
-
-            if manifest_exists:
-                manifest_backup_fd, manifest_backup_path = tempfile.mkstemp(
-                    suffix=".manifest.json.backup",
-                    prefix=".prepare_engineering_",
-                    dir=str(manifest_path.parent),
-                )
-                os.close(manifest_backup_fd)
-                manifest_backup = Path(manifest_backup_path)
-                shutil.copy2(manifest_path, manifest_backup)
-        except Exception as e:
-            # Clean up any backups that were created
-            if csv_backup and csv_backup.exists():
-                csv_backup.unlink()
-            if manifest_backup and manifest_backup.exists():
-                manifest_backup.unlink()
-            raise RuntimeError(f"Failed to create backups: {e}")
-
     # Write CSV to a temporary file
     csv_tmp_fd, csv_tmp_path = tempfile.mkstemp(
         suffix=".csv",
@@ -293,100 +350,151 @@ def build_dataset(args: argparse.Namespace) -> dict:
     manifest_tmp_file = Path(manifest_tmp_path)
 
     try:
-        wrote_header = False
-        output_rows = 0
-        global_source_row_id = 0
+        # For canonical profile: byte-level copy
+        if profile == "canonical":
+            # Test hook: simulate generation failure
+            if _TEST_GENERATION_FAILURE:
+                raise RuntimeError("Simulated generation failure")
 
-        # Date range statistics
-        source_earliest_date = None
-        source_latest_date = None
-        source_parseable_rows = 0
-        source_unparseable_rows = 0
-        output_earliest_date = None
-        output_latest_date = None
+            # Byte-level copy to temp file
+            shutil.copy2(input_path, csv_tmp_file)
+            output_rows = source_rows
+            output_sha256 = source_sha256
 
-        for copy_id in range(1, args.copies + 1):
-            global_source_row_id = 0
+            # Date statistics for manifest (parse source dates)
+            source_earliest_date = None
+            source_latest_date = None
+            source_parseable_rows = 0
+            source_unparseable_rows = 0
 
             for frame in iter_chunks(
                 input_path,
                 chunksize=args.chunksize,
                 encoding=args.encoding,
             ):
-                frame = frame.copy()
+                if args.date_column in frame.columns:
+                    parsed_dates, parseable_count, unparseable_count = parse_date_column(
+                        frame[args.date_column]
+                    )
+                    source_parseable_rows += parseable_count
+                    source_unparseable_rows += unparseable_count
 
-                if args.normalize_whitespace:
-                    frame = normalize_text_columns(frame)
-
-                # Collect source date statistics (only on first copy to avoid duplication)
-                if copy_id == 1 and args.date_column in frame.columns:
-                    dates = pd.to_datetime(frame[args.date_column], errors="coerce")
-                    parseable_mask = dates.notna()
-                    source_parseable_rows += int(parseable_mask.sum())
-                    source_unparseable_rows += int((~parseable_mask).sum())
-
+                    parseable_mask = parsed_dates.notna()
                     if parseable_mask.any():
-                        chunk_min = dates[parseable_mask].min()
-                        chunk_max = dates[parseable_mask].max()
+                        chunk_min = parsed_dates[parseable_mask].min()
+                        chunk_max = parsed_dates[parseable_mask].max()
 
                         if source_earliest_date is None or chunk_min < source_earliest_date:
                             source_earliest_date = chunk_min
                         if source_latest_date is None or chunk_max > source_latest_date:
                             source_latest_date = chunk_max
 
-                if args.shift_years:
-                    if args.date_column not in frame.columns:
-                        raise KeyError(
-                            f"Date column {args.date_column!r} not found. "
-                            f"Available columns: {list(frame.columns)}"
+            # Output dates are same as source for canonical
+            output_earliest_date = source_earliest_date
+            output_latest_date = source_latest_date
+
+        else:
+            # For engineering_reproducible: process data
+            wrote_header = False
+            output_rows = 0
+            global_source_row_id = 0
+
+            # Date range statistics
+            source_earliest_date = None
+            source_latest_date = None
+            source_parseable_rows = 0
+            source_unparseable_rows = 0
+            output_earliest_date = None
+            output_latest_date = None
+
+            # Test hook: simulate generation failure
+            if _TEST_GENERATION_FAILURE:
+                raise RuntimeError("Simulated generation failure")
+
+            for copy_id in range(1, args.copies + 1):
+                global_source_row_id = 0
+
+                for frame in iter_chunks(
+                    input_path,
+                    chunksize=args.chunksize,
+                    encoding=args.encoding,
+                ):
+                    frame = frame.copy()
+
+                    if args.normalize_whitespace:
+                        frame = normalize_text_columns(frame)
+
+                    # Collect source date statistics (only on first copy to avoid duplication)
+                    if copy_id == 1 and args.date_column in frame.columns:
+                        parsed_dates, parseable_count, unparseable_count = parse_date_column(
+                            frame[args.date_column]
                         )
-                    frame = shift_dates(frame, args.date_column, args.shift_years)
+                        source_parseable_rows += parseable_count
+                        source_unparseable_rows += unparseable_count
 
-                # Collect output date statistics (only on first copy to avoid duplication)
-                if copy_id == 1 and args.date_column in frame.columns:
-                    output_dates = pd.to_datetime(frame[args.date_column], errors="coerce")
-                    output_parseable = output_dates.notna()
+                        parseable_mask = parsed_dates.notna()
+                        if parseable_mask.any():
+                            chunk_min = parsed_dates[parseable_mask].min()
+                            chunk_max = parsed_dates[parseable_mask].max()
 
-                    if output_parseable.any():
-                        out_chunk_min = output_dates[output_parseable].min()
-                        out_chunk_max = output_dates[output_parseable].max()
+                            if source_earliest_date is None or chunk_min < source_earliest_date:
+                                source_earliest_date = chunk_min
+                            if source_latest_date is None or chunk_max > source_latest_date:
+                                source_latest_date = chunk_max
 
-                        if output_earliest_date is None or out_chunk_min < output_earliest_date:
-                            output_earliest_date = out_chunk_min
-                        if output_latest_date is None or out_chunk_max > output_latest_date:
-                            output_latest_date = out_chunk_max
+                    if args.shift_years:
+                        if args.date_column not in frame.columns:
+                            raise KeyError(
+                                f"Date column {args.date_column!r} not found. "
+                                f"Available columns: {list(frame.columns)}"
+                            )
+                        frame = shift_dates(frame, args.date_column, args.shift_years)
 
-                if args.add_lineage_columns:
-                    row_count = len(frame)
-                    frame["source_copy_id"] = copy_id
-                    frame["source_row_id"] = range(
-                        global_source_row_id + 1,
-                        global_source_row_id + row_count + 1,
+                    # Collect output date statistics (only on first copy to avoid duplication)
+                    if copy_id == 1 and args.date_column in frame.columns:
+                        output_parsed, _, _ = parse_date_column(frame[args.date_column])
+                        output_parseable = output_parsed.notna()
+
+                        if output_parseable.any():
+                            out_chunk_min = output_parsed[output_parseable].min()
+                            out_chunk_max = output_parsed[output_parseable].max()
+
+                            if output_earliest_date is None or out_chunk_min < output_earliest_date:
+                                output_earliest_date = out_chunk_min
+                            if output_latest_date is None or out_chunk_max > output_latest_date:
+                                output_latest_date = out_chunk_max
+
+                    if args.add_lineage_columns:
+                        row_count = len(frame)
+                        frame["source_copy_id"] = copy_id
+                        frame["source_row_id"] = range(
+                            global_source_row_id + 1,
+                            global_source_row_id + row_count + 1,
+                        )
+                        global_source_row_id += row_count
+
+                    mode = "w" if not wrote_header else "a"
+                    frame.to_csv(
+                        csv_tmp_file,
+                        mode=mode,
+                        index=False,
+                        header=not wrote_header,
+                        encoding="utf-8",
+                        lineterminator="\n",
                     )
-                    global_source_row_id += row_count
+                    wrote_header = True
+                    output_rows += len(frame)
 
-                mode = "w" if not wrote_header else "a"
-                frame.to_csv(
-                    csv_tmp_file,
-                    mode=mode,
-                    index=False,
-                    header=not wrote_header,
-                    encoding="utf-8",
-                    lineterminator="\n",
+            expected_rows = source_rows * args.copies
+            if output_rows != expected_rows:
+                raise RuntimeError(
+                    f"Row-count mismatch: wrote {output_rows}, expected {expected_rows}"
                 )
-                wrote_header = True
-                output_rows += len(frame)
 
-        expected_rows = source_rows * args.copies
-        if output_rows != expected_rows:
-            raise RuntimeError(
-                f"Row-count mismatch: wrote {output_rows}, expected {expected_rows}"
-            )
+            # CSV written successfully, compute SHA256
+            output_sha256 = sha256_file(csv_tmp_file)
 
-        # CSV written successfully, now prepare manifest
-        output_sha256 = sha256_file(csv_tmp_file)
-
-        # Get profile metadata
+        # Prepare manifest
         profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_reproducible"])
 
         # Format date range for manifest
@@ -428,7 +536,7 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 "chunksize": args.chunksize,
                 "note": (
                     "Original dates are preserved by default (shift_years=0). "
-                    "Date shift is opt-in via --shift-years."
+                    "Date shift is optional via --shift-years."
                 ),
             },
             "output": {
@@ -445,6 +553,44 @@ def build_dataset(args: argparse.Namespace) -> dict:
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+        # NOW backup old files (after successful generation)
+        csv_backup = None
+        manifest_backup = None
+
+        if args.overwrite:
+            try:
+                if csv_exists:
+                    csv_backup_fd, csv_backup_path = tempfile.mkstemp(
+                        suffix=".csv.backup",
+                        prefix=".prepare_engineering_",
+                        dir=str(output_path.parent),
+                    )
+                    os.close(csv_backup_fd)
+                    csv_backup = Path(csv_backup_path)
+                    shutil.copy2(output_path, csv_backup)
+
+                if manifest_exists:
+                    manifest_backup_fd, manifest_backup_path = tempfile.mkstemp(
+                        suffix=".manifest.json.backup",
+                        prefix=".prepare_engineering_",
+                        dir=str(manifest_path.parent),
+                    )
+                    os.close(manifest_backup_fd)
+                    manifest_backup = Path(manifest_backup_path)
+                    shutil.copy2(manifest_path, manifest_backup)
+            except Exception as e:
+                # Clean up any backups that were created
+                if csv_backup and csv_backup.exists():
+                    csv_backup.unlink()
+                if manifest_backup and manifest_backup.exists():
+                    manifest_backup.unlink()
+                # Clean up temp files
+                if csv_tmp_file.exists():
+                    csv_tmp_file.unlink()
+                if manifest_tmp_file.exists():
+                    manifest_tmp_file.unlink()
+                raise RuntimeError(f"Failed to create backups: {e}")
 
         # Rollback-safe replacement
         try:
@@ -513,18 +659,16 @@ def build_dataset(args: argparse.Namespace) -> dict:
 
 SELF_TEST_CSV = (
     "Invoice,StockCode,Description,Quantity,InvoiceDate,Price,Customer ID,Country\n"
-    "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26,2.55,17850.0,United Kingdom\n"
+    "536365,85123A,WHITE HANGING HEART T-LIGHT HOLDER,6,2010-12-01 08:26:00,2.55,17850.0,United Kingdom\n"
     "536366,22633,HAND WARMER UNION JACK,6,2010-12-01 08:28,1.85,17850,United Kingdom\n"
-    "C536367,ABC,,0,2010-12-01 08:30,0.00,,United Kingdom\n"
+    "C536367,ABC,,0,1/12/2010 08:30:00,0.00,,United Kingdom\n"
 )
 
 
 def run_self_test() -> int:
     """Minimal self-test using inline CSV data. No external files required.
 
-    Tests two scenarios:
-    1. Default mode: 8 business columns only, no lineage columns
-    2. Lineage mode: 8 business columns + source_copy_id + source_row_id
+    Tests multiple scenarios including canonical byte-level copy, date parsing, and rollback.
     """
     test_dir = Path(tempfile.mkdtemp(prefix="prepare_engineering_self_test_"))
     try:
@@ -533,8 +677,8 @@ def run_self_test() -> int:
 
         # Test 1: Default mode (no lineage columns)
         print("Running self-test 1: default mode (no lineage columns)...")
-        output_csv1 = test_dir / "test_output_default.csv"
-        manifest_csv1 = test_dir / "test_output_default.csv.manifest.json"
+        output_csv1 = test_dir / "test_outputDefault.csv"
+        manifest_csv1 = test_dir / "test_outputDefault.csv.manifest.json"
 
         args1 = argparse.Namespace(
             input=str(input_csv),
@@ -609,10 +753,10 @@ def run_self_test() -> int:
 
         print("Self-test 2 PASSED: lineage mode")
 
-        # Test 3: Profile canonical (verify manifest uses correct profile metadata)
-        print("Running self-test 3: profile canonical...")
-        output_csv3 = test_dir / "test_output_canonical.csv"
-        manifest_csv3 = test_dir / "test_output_canonical.csv.manifest.json"
+        # Test 3: Profile canonical (byte-level copy)
+        print("Running self-test 3: profile canonical (byte-level copy)...")
+        output_csv3 = test_dir / "retail_canonical.csv"
+        manifest_csv3 = test_dir / "retail_canonical.csv.manifest.json"
 
         args3 = argparse.Namespace(
             input=str(input_csv),
@@ -622,7 +766,7 @@ def run_self_test() -> int:
             chunksize=2,
             date_column=DEFAULT_DATE_COLUMN,
             shift_years=0,
-            normalize_whitespace=True,
+            normalize_whitespace=False,
             add_lineage_columns=False,
             manifest=str(manifest_csv3),
             overwrite=False,
@@ -637,12 +781,25 @@ def run_self_test() -> int:
         output_rows3 = manifest3["output"]["rows"]
         assert output_rows3 == 3, f"Expected 3 rows (3 source × 1 copy), got {output_rows3}"
 
+        # Verify SHA256 matches source (byte-level copy)
+        source_sha = sha256_file(input_csv)
+        output_sha = sha256_file(output_csv3)
+        assert source_sha == output_sha, f"Canonical SHA256 mismatch: source={source_sha}, output={output_sha}"
+
         # Verify manifest uses canonical profile metadata
         assert manifest3["profile"] == "canonical", "Manifest profile should be 'canonical'"
         assert "Original UCI Online Retail II dataset" in manifest3["purpose"], "Canonical purpose metadata incorrect"
         assert "Do not claim it represents real enterprise business data" in manifest3["limitations"], "Canonical limitations metadata incorrect"
 
-        print("Self-test 3 PASSED: profile canonical")
+        # Verify date range in manifest
+        assert "earliest_invoice_date" in manifest3["source"], "Missing earliest_invoice_date in manifest"
+        assert "latest_invoice_date" in manifest3["source"], "Missing latest_invoice_date in manifest"
+        assert manifest3["source"]["earliest_invoice_date"] == "2010-12-01", f"Expected 2010-12-01, got {manifest3['source']['earliest_invoice_date']}"
+        assert manifest3["source"]["latest_invoice_date"] == "2010-12-01", f"Expected 2010-12-01, got {manifest3['source']['latest_invoice_date']}"
+        assert manifest3["source"]["parseable_date_rows"] == 3, f"Expected 3 parseable rows, got {manifest3['source']['parseable_date_rows']}"
+        assert manifest3["source"]["unparseable_date_rows"] == 0, f"Expected 0 unparseable rows, got {manifest3['source']['unparseable_date_rows']}"
+
+        print("Self-test 3 PASSED: profile canonical (byte-level copy)")
 
         # Test 4: canonical with copies=3 should fail
         print("Running self-test 4: canonical with copies=3 should fail...")
@@ -657,7 +814,7 @@ def run_self_test() -> int:
             chunksize=2,
             date_column=DEFAULT_DATE_COLUMN,
             shift_years=0,
-            normalize_whitespace=True,
+            normalize_whitespace=False,
             add_lineage_columns=False,
             manifest=str(manifest_csv4),
             overwrite=False,
@@ -684,7 +841,7 @@ def run_self_test() -> int:
             chunksize=2,
             date_column=DEFAULT_DATE_COLUMN,
             shift_years=17,  # Invalid for canonical
-            normalize_whitespace=True,
+            normalize_whitespace=False,
             add_lineage_columns=False,
             manifest=str(manifest_csv5),
             overwrite=False,
@@ -698,10 +855,10 @@ def run_self_test() -> int:
             assert "shift_years=0" in str(exc), f"Expected shift_years=0 error, got: {exc}"
         print("Self-test 5 PASSED: canonical with shift_years!=0 rejected")
 
-        # Test 6: synthetic_multiday should fail (not implemented)
-        print("Running self-test 6: synthetic_multiday should fail...")
-        output_csv6 = test_dir / "test_output_synthetic.csv"
-        manifest_csv6 = test_dir / "test_output_synthetic.csv.manifest.json"
+        # Test 6: canonical with normalize_whitespace should fail
+        print("Running self-test 6: canonical with normalize_whitespace should fail...")
+        output_csv6 = test_dir / "test_output_canonical_normalize.csv"
+        manifest_csv6 = test_dir / "test_output_canonical_normalize.csv.manifest.json"
 
         args6 = argparse.Namespace(
             input=str(input_csv),
@@ -711,19 +868,19 @@ def run_self_test() -> int:
             chunksize=2,
             date_column=DEFAULT_DATE_COLUMN,
             shift_years=0,
-            normalize_whitespace=True,
+            normalize_whitespace=True,  # Invalid for canonical
             add_lineage_columns=False,
             manifest=str(manifest_csv6),
             overwrite=False,
-            profile="synthetic_multiday",
+            profile="canonical",
         )
 
         try:
             build_dataset(args6)
-            raise AssertionError("synthetic_multiday should have raised NotImplementedError")
-        except NotImplementedError as exc:
-            assert "not yet implemented" in str(exc), f"Expected not implemented error, got: {exc}"
-        print("Self-test 6 PASSED: synthetic_multiday rejected")
+            raise AssertionError("canonical with normalize_whitespace should have raised ValueError")
+        except ValueError as exc:
+            assert "normalize-whitespace" in str(exc), f"Expected normalize-whitespace error, got: {exc}"
+        print("Self-test 6 PASSED: canonical with normalize_whitespace rejected")
 
         # Test 7: Manifest commit failure rollback
         print("Running self-test 7: manifest commit failure rollback...")
@@ -927,11 +1084,83 @@ def run_self_test() -> int:
         finally:
             _TEST_COMMIT_FAILURE_AFTER_CSV = False
 
+        # Test 10: Generation failure with existing files
+        print("Running self-test 10: generation failure with existing files...")
+        output_csv10 = test_dir / "test_output_gen_failure.csv"
+        manifest_csv10 = test_dir / "test_output_gen_failure.csv.manifest.json"
+
+        # Create initial files
+        args10_init = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv10),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv10),
+            overwrite=False,
+            profile="engineering_reproducible",
+        )
+        build_dataset(args10_init)
+
+        # Record original content
+        original_csv10 = output_csv10.read_bytes()
+        original_manifest10 = manifest_csv10.read_bytes()
+
+        # Enable test hook to simulate generation failure
+        global _TEST_GENERATION_FAILURE
+        _TEST_GENERATION_FAILURE = True
+
+        try:
+            args10_overwrite = argparse.Namespace(
+                input=str(input_csv),
+                output=str(output_csv10),
+                copies=2,
+                encoding="utf-8",
+                chunksize=2,
+                date_column=DEFAULT_DATE_COLUMN,
+                shift_years=0,
+                normalize_whitespace=True,
+                add_lineage_columns=False,
+                manifest=str(manifest_csv10),
+                overwrite=True,
+                profile="engineering_reproducible",
+            )
+
+            try:
+                build_dataset(args10_overwrite)
+                raise AssertionError("Should have raised RuntimeError due to generation failure")
+            except RuntimeError as exc:
+                assert "Simulated generation failure" in str(exc)
+
+            # Verify original files unchanged
+            assert output_csv10.exists(), "CSV should still exist"
+            assert manifest_csv10.exists(), "Manifest should still exist"
+
+            restored_csv10 = output_csv10.read_bytes()
+            restored_manifest10 = manifest_csv10.read_bytes()
+
+            assert restored_csv10 == original_csv10, "CSV should be unchanged"
+            assert restored_manifest10 == original_manifest10, "Manifest should be unchanged"
+
+            # Verify no residual temp files or backups
+            temp_files = list(test_dir.glob(".prepare_engineering_*"))
+            assert len(temp_files) == 0, f"No temp files should remain, found: {temp_files}"
+
+            print("Self-test 10 PASSED: generation failure with existing files")
+        finally:
+            _TEST_GENERATION_FAILURE = False
+
         print("\nALL SELF-TESTS PASSED")
         print("\nDefault mode manifest:")
         print(json.dumps(manifest1, ensure_ascii=False, indent=2))
         print("\nLineage mode manifest:")
         print(json.dumps(manifest2, ensure_ascii=False, indent=2))
+        print("\nCanonical mode manifest:")
+        print(json.dumps(manifest3, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
         print(f"SELF-TEST FAILED: {exc}", file=sys.stderr)
@@ -958,7 +1187,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         help=(
-            f"Path to generated CSV (default: data/generated/{DEFAULT_OUTPUT_NAME}). "
+            "Path to generated CSV. Default is dynamically generated based on profile: "
+            "canonical -> retail_canonical.csv, "
+            "engineering_reproducible -> retail_engineering_reproducible_<copies>x.csv. "
             "Never defaults to the existing legacy data/generated/retail.csv."
         ),
     )
@@ -1005,7 +1236,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--normalize-whitespace",
         action="store_true",
-        help="Trim surrounding whitespace in text columns",
+        help="Trim surrounding whitespace in text columns (forbidden for canonical)",
     )
     parser.add_argument(
         "--add-lineage-columns",
@@ -1013,7 +1244,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Append source_copy_id and source_row_id columns. "
             "WARNING: When enabled, the Hive source table DDL must be updated "
-            "to include these extra columns before loading."
+            "to include these extra columns before loading. "
+            "Forbidden for canonical profile."
         ),
     )
     parser.add_argument(
@@ -1044,7 +1276,10 @@ def main() -> int:
         return 1
 
     if not args.output:
-        args.output = os.path.join("data", "generated", DEFAULT_OUTPUT_NAME)
+        profile = getattr(args, "profile", "engineering_reproducible")
+        args.output = os.path.join(
+            "data", "generated", get_default_output_name(profile, args.copies)
+        )
 
     try:
         manifest = build_dataset(args)

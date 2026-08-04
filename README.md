@@ -226,8 +226,10 @@ ods_retail_reject_hive
 支持格式：
 
 ```text
-yyyy-MM-dd HH:mm:ss
-d/M/yyyy HH:mm:ss
+yyyy-MM-dd H:mm:ss
+yyyy-MM-dd H:mm
+d/M/yyyy H:mm:ss
+d/M/yyyy H:mm
 ```
 
 Reject 表保留原始字段、解析结果、异常编码、异常原因和处理批次，便于追踪问题数据。
