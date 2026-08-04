@@ -938,13 +938,13 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01\&endDate=2026-04-08
 
 &#x20;     "totalSales": 53230287.48,
 
-&#x20;     "totalOrders": 36970,
+&#x20;     "totalOrders": 36969,
 
 &#x20;     "totalCustomers": 5878,
 
 &#x20;     "totalQuantity": 32118447,
 
-&#x20;     "avgOrderValue": 1439.82,
+&#x20;     "avgOrderValue": 1440.00,
 
 &#x20;     "sourceSystem": "hive\_ads"
 
@@ -1165,7 +1165,7 @@ DWD 层对以下字段执行标准化清洗：
 ```sql
 
 SELECT
-  COUNT(*) AS rows,
+  COUNT(*) AS row_count,
 
   COUNT(DISTINCT invoice) AS invoices,
 

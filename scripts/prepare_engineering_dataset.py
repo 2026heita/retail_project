@@ -65,7 +65,9 @@ DEFAULT_CHUNKSIZE = 100_000
 DEFAULT_OUTPUT_NAME = "retail_engineering_reproducible_3x.csv"
 
 # Profile definitions
-VALID_PROFILES = ("canonical", "engineering_legacy_3x", "synthetic_multiday")
+# Note: engineering_legacy_3x is reserved for describing existing historical 3.2M files,
+# not for generating new datasets. Use engineering_reproducible for new generations.
+VALID_PROFILES = ("canonical", "engineering_reproducible", "synthetic_multiday")
 
 PROFILE_METADATA = {
     "canonical": {
@@ -79,15 +81,14 @@ PROFILE_METADATA = {
             "real enterprise business data."
         ),
     },
-    "engineering_legacy_3x": {
+    "engineering_reproducible": {
         "purpose": (
             "Engineering-scale validation for ETL, partitioning, scheduling, "
             "idempotent reruns, and data-quality checks. Expanded rows are not "
-            "independent real-world transactions. This profile preserves the "
-            "historical engineering regression baseline."
+            "independent real-world transactions."
         ),
         "limitations": (
-            "This profile uses 3x copies of source data with shifted dates. "
+            "This profile uses copies of source data with shifted dates. "
             "Do not present results as real business outcomes."
         ),
     },
@@ -282,8 +283,8 @@ def build_dataset(args: argparse.Namespace) -> dict:
     output_sha256 = sha256_file(output_path)
 
     # Get profile metadata
-    profile = getattr(args, "profile", "engineering_legacy_3x")
-    profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_legacy_3x"])
+    profile = getattr(args, "profile", "engineering_reproducible")
+    profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_reproducible"])
 
     manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -368,7 +369,7 @@ def run_self_test() -> int:
             add_lineage_columns=False,
             manifest=str(manifest_csv1),
             overwrite=False,
-            profile="engineering_legacy_3x",
+            profile="engineering_reproducible",
         )
 
         manifest1 = build_dataset(args1)
@@ -411,7 +412,7 @@ def run_self_test() -> int:
             add_lineage_columns=True,
             manifest=str(manifest_csv2),
             overwrite=False,
-            profile="engineering_legacy_3x",
+            profile="engineering_reproducible",
         )
 
         manifest2 = build_dataset(args2)
@@ -508,10 +509,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=VALID_PROFILES,
-        default="engineering_legacy_3x",
+        default="engineering_reproducible",
         help=(
             "Data profile to generate. Determines purpose and limitations in manifest. "
-            f"Valid values: {', '.join(VALID_PROFILES)} (default: engineering_legacy_3x)"
+            f"Valid values: {', '.join(VALID_PROFILES)} (default: engineering_reproducible)"
         ),
     )
     parser.add_argument(

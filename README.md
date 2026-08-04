@@ -40,7 +40,7 @@
 | Java 服务 | 单日概览、日期范围趋势、日环比分析、Bean Validation、统一响应、全局异常、requestId |
 | 前端闭环 | 零售 BI Connector、KPI 经营概览、日环比变化分析、后端 API 联通、时间趋势图、CSV 导出 |
 
-当前主回归日期 `2026-04-08` 的核心结果：
+`engineering_legacy_3x` 历史工程回归日期 `2026-04-08` 的核心结果：
 
 ```text
 源表 / ODS Raw         3,202,113 行
@@ -57,11 +57,13 @@ DWD / fact_order       2,416,593 行
 
 本项目使用三种数据 profile，各自用途不同：
 
-| Profile | 规模 | 日期范围 | 用途 |
-|---|---|---|---|
-| `canonical` | 1,067,371 行 | 2009—2011 | 业务口径定义、标准数据验证 |
-| `engineering_legacy_3x` | 约 3,202,113 行 | 2026-04-08 | 历史工程回归基线，保留分区/重跑/门禁/星型模型验收证据 |
-| `synthetic_multiday` | 约 3,202,113 行/天 | 2026-04-01 至 2026-04-07 | 回刷、T+1、幂等性、趋势接口和前端链路验证 |
+| Profile | 规模 | 日期范围 | 用途 | 当前状态 |
+|---|---|---|---|---|
+| `canonical` | 1,067,371 行 | 2009—2011 | 业务口径定义、标准数据验证 | 原始数据已确认，完整链路和BI截图待重跑 |
+| `engineering_legacy_3x` | 约 3,202,113 行 | 2026-04-08 | 历史工程回归基线，保留分区/重跑/门禁/星型模型验收证据 | 历史完整链路已验证 |
+| `synthetic_multiday` | 约 3,202,113 行/天 | 2026-04-01 至 2026-04-07 | 回刷、T+1、幂等性、趋势接口和前端链路验证 | 多日期链路已验证 |
+
+未来公开BI默认数据计划切换为 `canonical`。当前截图继续属于工程验证证据。
 
 - `canonical` 基于 UCI Online Retail II 公开数据集，原始日期为 2009—2011 年。
 - `engineering_legacy_3x` 是较早阶段通过复制扩展生成的工程验证数据，日期偏移至 2026-04-08，用于证明分区重跑、质量门禁、星型模型和 DolphinScheduler 链路曾经运行成功。它不代表真实企业经营数据。
@@ -538,10 +540,10 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
     {
       "dt": "2026-04-08",
       "totalSales": 53230287.48,
-      "totalOrders": 36970,
+      "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1439.82,
+      "avgOrderValue": 1440.00,
       "sourceSystem": "hive_ads"
     }
   ],
