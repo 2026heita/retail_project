@@ -15,23 +15,30 @@ Key design decisions:
 - Automatically generates a JSON manifest with checksums and row counts.
 - Default output filename: retail_engineering_reproducible_3x.csv
   (never overwrites the existing legacy data/generated/retail.csv by default).
+- Default output contains the original 8 business columns only.
+- Lineage columns (source_copy_id, source_row_id) are opt-in via
+  --add-lineage-columns. When enabled, the Hive source table DDL must be
+  updated to include these extra columns before loading.
 - Includes a minimal self-test (--self-test) that runs on a small inline
   sample without requiring external files.
 
-Usage:
-  # Generate 3x engineering dataset (default)
-  python scripts/prepare_engineering_dataset.py \
-    --input data/raw/online_retail_II.csv \
-    --output data/generated/retail_engineering_reproducible_3x.csv
-
-  # Shift dates to a target year and add lineage columns
+Recommended default usage:
   python scripts/prepare_engineering_dataset.py \
     --input data/raw/online_retail_II.csv \
     --output data/generated/retail_engineering_reproducible_3x.csv \
+    --copies 3 \
+    --normalize-whitespace
+
+Optional: shift dates and add lineage columns (requires Hive DDL update):
+  python scripts/prepare_engineering_dataset.py \
+    --input data/raw/online_retail_II.csv \
+    --output data/generated/retail_engineering_reproducible_3x.csv \
+    --copies 3 \
+    --normalize-whitespace \
     --shift-years 17 \
     --add-lineage-columns
 
-  # Run minimal self-test
+Run minimal self-test:
   python scripts/prepare_engineering_dataset.py --self-test
 """
 
@@ -293,19 +300,67 @@ SELF_TEST_CSV = (
 
 
 def run_self_test() -> int:
-    """Minimal self-test using inline CSV data. No external files required."""
+    """Minimal self-test using inline CSV data. No external files required.
+
+    Tests two scenarios:
+    1. Default mode: 8 business columns only, no lineage columns
+    2. Lineage mode: 8 business columns + source_copy_id + source_row_id
+    """
     test_dir = Path(tempfile.mkdtemp(prefix="prepare_engineering_self_test_"))
     try:
         input_csv = test_dir / "test_input.csv"
         input_csv.write_text(SELF_TEST_CSV, encoding="utf-8")
 
-        output_csv = test_dir / "test_output.csv"
-        manifest_csv = test_dir / "test_output.csv.manifest.json"
+        # Test 1: Default mode (no lineage columns)
+        print("Running self-test 1: default mode (no lineage columns)...")
+        output_csv1 = test_dir / "test_output_default.csv"
+        manifest_csv1 = test_dir / "test_output_default.csv.manifest.json"
 
-        # Simulate argparse namespace
-        args = argparse.Namespace(
+        args1 = argparse.Namespace(
             input=str(input_csv),
-            output=str(output_csv),
+            output=str(output_csv1),
+            copies=2,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv1),
+            overwrite=False,
+        )
+
+        manifest1 = build_dataset(args1)
+
+        assert output_csv1.exists(), "Output CSV not created (default mode)"
+        assert manifest_csv1.exists(), "Manifest not created (default mode)"
+
+        output_rows1 = manifest1["output"]["rows"]
+        assert output_rows1 == 6, f"Expected 6 rows (3 source × 2 copies), got {output_rows1}"
+
+        # Verify no lineage columns in default mode
+        df1 = pd.read_csv(output_csv1, dtype=str)
+        assert "source_copy_id" not in df1.columns, "source_copy_id should NOT exist in default mode"
+        assert "source_row_id" not in df1.columns, "source_row_id should NOT exist in default mode"
+
+        # Verify original 8 columns exist
+        expected_cols = {"Invoice", "StockCode", "Description", "Quantity", "InvoiceDate", "Price", "Customer ID", "Country"}
+        actual_cols = set(df1.columns)
+        assert actual_cols == expected_cols, f"Expected columns {expected_cols}, got {actual_cols}"
+
+        # Verify Customer ID can be empty (row 3 has empty Customer ID)
+        assert df1["Customer ID"].isna().any() or (df1["Customer ID"] == "").any(), "Customer ID should allow empty values"
+
+        print("Self-test 1 PASSED: default mode")
+
+        # Test 2: Lineage mode (with source_copy_id and source_row_id)
+        print("Running self-test 2: lineage mode (with lineage columns)...")
+        output_csv2 = test_dir / "test_output_lineage.csv"
+        manifest_csv2 = test_dir / "test_output_lineage.csv.manifest.json"
+
+        args2 = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv2),
             copies=2,
             encoding="utf-8",
             chunksize=2,
@@ -313,29 +368,35 @@ def run_self_test() -> int:
             shift_years=0,
             normalize_whitespace=True,
             add_lineage_columns=True,
-            manifest=str(manifest_csv),
+            manifest=str(manifest_csv2),
             overwrite=False,
         )
 
-        manifest = build_dataset(args)
+        manifest2 = build_dataset(args2)
 
-        # Verify output
-        assert output_csv.exists(), "Output CSV not created"
-        assert manifest_csv.exists(), "Manifest not created"
+        assert output_csv2.exists(), "Output CSV not created (lineage mode)"
+        assert manifest_csv2.exists(), "Manifest not created (lineage mode)"
 
-        output_rows = manifest["output"]["rows"]
-        assert output_rows == 6, f"Expected 6 rows (3 source × 2 copies), got {output_rows}"
+        output_rows2 = manifest2["output"]["rows"]
+        assert output_rows2 == 6, f"Expected 6 rows (3 source × 2 copies), got {output_rows2}"
 
         # Verify lineage columns exist
-        df = pd.read_csv(output_csv, dtype=str)
-        assert "source_copy_id" in df.columns, "source_copy_id column missing"
-        assert "source_row_id" in df.columns, "source_row_id column missing"
+        df2 = pd.read_csv(output_csv2, dtype=str)
+        assert "source_copy_id" in df2.columns, "source_copy_id column missing in lineage mode"
+        assert "source_row_id" in df2.columns, "source_row_id column missing in lineage mode"
 
-        print("SELF-TEST PASSED")
-        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        print("Self-test 2 PASSED: lineage mode")
+
+        print("\nALL SELF-TESTS PASSED")
+        print("\nDefault mode manifest:")
+        print(json.dumps(manifest1, ensure_ascii=False, indent=2))
+        print("\nLineage mode manifest:")
+        print(json.dumps(manifest2, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
         print(f"SELF-TEST FAILED: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return 1
     finally:
         shutil.rmtree(test_dir, ignore_errors=True)
@@ -400,7 +461,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--add-lineage-columns",
         action="store_true",
-        help="Append source_copy_id and source_row_id columns",
+        help=(
+            "Append source_copy_id and source_row_id columns. "
+            "WARNING: When enabled, the Hive source table DDL must be updated "
+            "to include these extra columns before loading."
+        ),
     )
     parser.add_argument(
         "--manifest",

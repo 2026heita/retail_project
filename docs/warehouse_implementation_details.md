@@ -1134,7 +1134,98 @@ ODS Raw 和 ODS Reject 属于技术接入与异常追踪层，不直接作为业
 
 
 
-\### 6.1 样例数据
+\### 6.1 DWD 字段标准化与重跑基线
+
+
+
+DWD 层对以下字段执行标准化清洗：
+
+
+
+\- `invoice`：TRIM 去除首尾空格
+
+\- `stockcode`：TRIM + UPPER 转大写
+
+\- `description`：TRIM 去除首尾空格
+
+\- `country`：TRIM 去除首尾空格
+
+\- `customerid`：TRIM + 去除纯数字 ID 末尾的 `.0`（如 `17850.0` → `17850`）
+
+
+
+**重跑 DWD 前的基线记录**
+
+
+
+修改 DWD 清洗逻辑后，重跑前应记录旧基线：
+
+
+
+```sql
+
+SELECT
+  COUNT(*) AS rows,
+
+  COUNT(DISTINCT invoice) AS invoices,
+
+  COUNT(DISTINCT customerid) AS customers,
+
+  COUNT(DISTINCT stockcode) AS products,
+
+  SUM(quantity) AS quantity_sum,
+
+  ROUND(SUM(amount), 2) AS amount_sum
+
+FROM dwd_retail_clean_hive
+
+WHERE dt = '2026-04-08';
+
+```
+
+
+
+重跑后再次执行上述查询，并对比以下指标：
+
+
+
+\- **行数**：不应意外下降（标准化不应过滤有效数据）
+
+\- **数量和金额**：原则上不应变化（同一批订单的 quantity 和 amount 不变）
+
+\- **客户数、订单数、商品数**：可能因空格或 `.0` 标准化小幅下降（如 `17850.0` 和 `17850` 合并为同一客户）
+
+
+
+**标准化效果验证**
+
+
+
+使用 `hive_sql/32_dwd_normalization_validation_hive.sql` 验证标准化效果：
+
+
+
+```bash
+
+hive --hiveconf bizdate=2026-04-08 -f hive_sql/32_dwd_normalization_validation_hive.sql
+
+```
+
+
+
+预期结果：
+
+
+
+\- 各字段首尾空格数量：0
+
+\- `customerid` 以 `.0` 结尾数量：0
+
+\- `stockcode` 全部为大写
+
+
+
+\### 6.2 样例数据
 
 
 
