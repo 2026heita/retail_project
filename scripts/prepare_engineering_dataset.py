@@ -194,6 +194,25 @@ def build_dataset(args: argparse.Namespace) -> dict:
     if input_path == output_path:
         raise ValueError("Input and output paths must be different")
 
+    # Profile validation
+    profile = getattr(args, "profile", "engineering_reproducible")
+
+    if profile == "canonical":
+        if args.copies != 1:
+            raise ValueError(
+                f"canonical profile requires copies=1, got copies={args.copies}"
+            )
+        if args.shift_years != 0:
+            raise ValueError(
+                f"canonical profile requires shift_years=0, got shift_years={args.shift_years}"
+            )
+    elif profile == "synthetic_multiday":
+        raise NotImplementedError(
+            "synthetic_multiday profile is not yet implemented. "
+            "This profile requires explicit date simulation parameters "
+            "(e.g., --start-date, --end-date) which are not currently supported."
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -209,14 +228,23 @@ def build_dataset(args: argparse.Namespace) -> dict:
             f"Output already exists: {output_path}. Use --overwrite to replace it."
         )
 
-    # Write to a temporary file first, then atomically replace.
-    tmp_fd, tmp_path = tempfile.mkstemp(
+    # Write CSV to a temporary file first
+    csv_tmp_fd, csv_tmp_path = tempfile.mkstemp(
         suffix=".csv",
-        prefix=".prepare_engineering_",
+        prefix=".prepare_engineering_csv_",
         dir=str(output_path.parent),
     )
-    os.close(tmp_fd)
-    tmp_file = Path(tmp_path)
+    os.close(csv_tmp_fd)
+    csv_tmp_file = Path(csv_tmp_path)
+
+    # Write manifest to a temporary file first
+    manifest_tmp_fd, manifest_tmp_path = tempfile.mkstemp(
+        suffix=".manifest.json",
+        prefix=".prepare_engineering_manifest_",
+        dir=str(manifest_path.parent),
+    )
+    os.close(manifest_tmp_fd)
+    manifest_tmp_file = Path(manifest_tmp_path)
 
     try:
         wrote_header = False
@@ -255,7 +283,7 @@ def build_dataset(args: argparse.Namespace) -> dict:
 
                 mode = "w" if not wrote_header else "a"
                 frame.to_csv(
-                    tmp_file,
+                    csv_tmp_file,
                     mode=mode,
                     index=False,
                     header=not wrote_header,
@@ -271,59 +299,64 @@ def build_dataset(args: argparse.Namespace) -> dict:
                 f"Row-count mismatch: wrote {output_rows}, expected {expected_rows}"
             )
 
-        # Atomic replace: rename temp file to target path.
-        tmp_file.replace(output_path)
+        # CSV written successfully, now prepare manifest
+        output_sha256 = sha256_file(csv_tmp_file)
+
+        # Get profile metadata
+        profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_reproducible"])
+
+        manifest = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "profile": profile,
+            "purpose": profile_meta["purpose"],
+            "limitations": profile_meta["limitations"],
+            "source": {
+                "dataset": "Online Retail II",
+                "direct_download_source": "Kaggle: mashlyn/online-retail-ii-uci",
+                "upstream_source": "UCI Machine Learning Repository",
+                "input_path": str(input_path),
+                "sha256": source_sha256,
+                "rows": source_rows,
+                "encoding": args.encoding,
+            },
+            "generation": {
+                "copies": args.copies,
+                "normalize_whitespace": args.normalize_whitespace,
+                "date_column": args.date_column,
+                "shift_years": args.shift_years,
+                "add_lineage_columns": args.add_lineage_columns,
+                "chunksize": args.chunksize,
+                "note": (
+                    "Original dates are preserved by default (shift_years=0). "
+                    "Date shift is opt-in via --shift-years."
+                ),
+            },
+            "output": {
+                "path": str(output_path),
+                "sha256": output_sha256,
+                "rows": output_rows,
+                "encoding": "utf-8",
+            },
+        }
+
+        # Write manifest to temp file
+        manifest_tmp_file.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        # Both CSV and manifest temp files are ready, atomically replace
+        csv_tmp_file.replace(output_path)
+        manifest_tmp_file.replace(manifest_path)
 
     except Exception:
-        # Clean up temp file on any failure.
-        if tmp_file.exists():
-            tmp_file.unlink()
+        # Clean up both temp files on any failure
+        if csv_tmp_file.exists():
+            csv_tmp_file.unlink()
+        if manifest_tmp_file.exists():
+            manifest_tmp_file.unlink()
         raise
 
-    output_sha256 = sha256_file(output_path)
-
-    # Get profile metadata
-    profile = getattr(args, "profile", "engineering_reproducible")
-    profile_meta = PROFILE_METADATA.get(profile, PROFILE_METADATA["engineering_reproducible"])
-
-    manifest = {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "profile": profile,
-        "purpose": profile_meta["purpose"],
-        "limitations": profile_meta["limitations"],
-        "source": {
-            "dataset": "Online Retail II",
-            "direct_download_source": "Kaggle: mashlyn/online-retail-ii-uci",
-            "upstream_source": "UCI Machine Learning Repository",
-            "input_path": str(input_path),
-            "sha256": source_sha256,
-            "rows": source_rows,
-            "encoding": args.encoding,
-        },
-        "generation": {
-            "copies": args.copies,
-            "normalize_whitespace": args.normalize_whitespace,
-            "date_column": args.date_column,
-            "shift_years": args.shift_years,
-            "add_lineage_columns": args.add_lineage_columns,
-            "chunksize": args.chunksize,
-            "note": (
-                "Original dates are preserved by default (shift_years=0). "
-                "Date shift is opt-in via --shift-years."
-            ),
-        },
-        "output": {
-            "path": str(output_path),
-            "sha256": output_sha256,
-            "rows": output_rows,
-            "encoding": "utf-8",
-        },
-    }
-
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
     return manifest
 
 
@@ -464,6 +497,87 @@ def run_self_test() -> int:
         assert "Do not claim it represents real enterprise business data" in manifest3["limitations"], "Canonical limitations metadata incorrect"
 
         print("Self-test 3 PASSED: profile canonical")
+
+        # Test 4: canonical with copies=3 should fail
+        print("Running self-test 4: canonical with copies=3 should fail...")
+        output_csv4 = test_dir / "test_output_canonical_invalid.csv"
+        manifest_csv4 = test_dir / "test_output_canonical_invalid.csv.manifest.json"
+
+        args4 = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv4),
+            copies=3,  # Invalid for canonical
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv4),
+            overwrite=False,
+            profile="canonical",
+        )
+
+        try:
+            build_dataset(args4)
+            raise AssertionError("canonical with copies=3 should have raised ValueError")
+        except ValueError as exc:
+            assert "copies=1" in str(exc), f"Expected copies=1 error, got: {exc}"
+        print("Self-test 4 PASSED: canonical with copies=3 rejected")
+
+        # Test 5: canonical with shift_years!=0 should fail
+        print("Running self-test 5: canonical with shift_years!=0 should fail...")
+        output_csv5 = test_dir / "test_output_canonical_shift.csv"
+        manifest_csv5 = test_dir / "test_output_canonical_shift.csv.manifest.json"
+
+        args5 = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv5),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=17,  # Invalid for canonical
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv5),
+            overwrite=False,
+            profile="canonical",
+        )
+
+        try:
+            build_dataset(args5)
+            raise AssertionError("canonical with shift_years=17 should have raised ValueError")
+        except ValueError as exc:
+            assert "shift_years=0" in str(exc), f"Expected shift_years=0 error, got: {exc}"
+        print("Self-test 5 PASSED: canonical with shift_years!=0 rejected")
+
+        # Test 6: synthetic_multiday should fail (not implemented)
+        print("Running self-test 6: synthetic_multiday should fail...")
+        output_csv6 = test_dir / "test_output_synthetic.csv"
+        manifest_csv6 = test_dir / "test_output_synthetic.csv.manifest.json"
+
+        args6 = argparse.Namespace(
+            input=str(input_csv),
+            output=str(output_csv6),
+            copies=1,
+            encoding="utf-8",
+            chunksize=2,
+            date_column=DEFAULT_DATE_COLUMN,
+            shift_years=0,
+            normalize_whitespace=True,
+            add_lineage_columns=False,
+            manifest=str(manifest_csv6),
+            overwrite=False,
+            profile="synthetic_multiday",
+        )
+
+        try:
+            build_dataset(args6)
+            raise AssertionError("synthetic_multiday should have raised NotImplementedError")
+        except NotImplementedError as exc:
+            assert "not yet implemented" in str(exc), f"Expected not implemented error, got: {exc}"
+        print("Self-test 6 PASSED: synthetic_multiday rejected")
 
         print("\nALL SELF-TESTS PASSED")
         print("\nDefault mode manifest:")

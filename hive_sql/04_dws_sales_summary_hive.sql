@@ -24,7 +24,9 @@ WITH base AS (
     SELECT
         country,
         invoice,
+        stockcode,
         customerid,
+        invoicedate,
         CAST(COALESCE(quantity,0) * COALESCE(price,0) AS DECIMAL(14,2)) AS amount
     FROM dwd_retail_clean_hive
     WHERE dt='${hiveconf:bizdate}'

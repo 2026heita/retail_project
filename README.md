@@ -543,7 +543,7 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
       "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1440.00,
+      "avgOrderValue": 1439.86,
       "sourceSystem": "hive_ads"
     }
   ],

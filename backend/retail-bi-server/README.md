@@ -102,7 +102,7 @@ GET /api/v1/dashboard/overview?date=2026-04-08
     "totalOrders": 36969,
     "totalCustomers": 5878,
     "totalQuantity": 32118447,
-    "avgOrderValue": 1440.00,
+    "avgOrderValue": 1439.86,
     "sourceSystem": "hive_ads"
   },
   "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -207,7 +207,7 @@ changePercent = (current - previous) / previous × 100
       "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1440.00,
+      "avgOrderValue": 1439.86,
       "sourceSystem": "hive_ads"
     },
     "previous": {
@@ -247,7 +247,7 @@ changePercent = (current - previous) / previous × 100
       "totalOrders": 36969,
       "totalCustomers": 5878,
       "totalQuantity": 32118447,
-      "avgOrderValue": 1440.00,
+      "avgOrderValue": 1439.86,
       "sourceSystem": "hive_ads"
     },
     "previous": null,
@@ -274,7 +274,7 @@ changePercent = (current - previous) / previous × 100
 RETAIL_DB_HOST=localhost              # MySQL 主机地址（默认 localhost）
 RETAIL_DB_PORT=3306                   # MySQL 端口（默认 3306）
 RETAIL_DB_NAME=retail_bi              # 数据库名
-RETAIL_DB_USERNAME=retail_bi_user     # 数据库用户名
+RETAIL_DB_USERNAME=retail_api_user     # 数据库用户名
 RETAIL_DB_PASSWORD=<YOUR_PASSWORD>    # 数据库密码
 
 # 服务配置

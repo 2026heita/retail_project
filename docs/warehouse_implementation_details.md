@@ -944,7 +944,7 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01\&endDate=2026-04-08
 
 &#x20;     "totalQuantity": 32118447,
 
-&#x20;     "avgOrderValue": 1440.00,
+&#x20;     "avgOrderValue": 1439.86,
 
 &#x20;     "sourceSystem": "hive\_ads"
 
