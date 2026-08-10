@@ -1539,7 +1539,7 @@ run\_star\_schema\_hive.sh
 
 run\_star\_quality\_gate\_hive.sh
 
-执行 12 条星型模型规则。
+执行 17 条星型模型规则。
 
 
 
@@ -1831,7 +1831,7 @@ hive\_sql/10\_check\_ods\_retail\_hive.sql
 
 28\_load\_star\_quality\_log\_hive.sql
 
-创建并写入 12 条星型模型规则。
+创建并写入 17 条星型模型规则。
 
 ```
 
@@ -3249,7 +3249,7 @@ ${PROJECT\_HOME}/hive/
 
 \- DolphinScheduler JSON 尚未同步 Shell 完整 20 步链路；
 
-\- 当前 Reject 只覆盖日期为空和日期解析失败；
+\- 当前 canonical 已验收基线 reject=0；新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前仅完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑。
 
 \- SCD2 回刷保护脚本尚未自动接入主入口；
 
