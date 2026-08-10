@@ -92,7 +92,15 @@ WITH source_metrics AS (
                              ),
                              UNIX_TIMESTAMP(
                                  TRIM(invoicedate),
+                                 'yyyy-MM-dd HH:mm'
+                             ),
+                             UNIX_TIMESTAMP(
+                                 TRIM(invoicedate),
                                  'd/M/yyyy HH:mm:ss'
+                             ),
+                             UNIX_TIMESTAMP(
+                                 TRIM(invoicedate),
+                                 'd/M/yyyy HH:mm'
                              )
                          ) IS NOT NULL
                     THEN 1
