@@ -3,13 +3,15 @@
 -- 功能: 加载星型模型订单事实表
 -- 说明:
 --   1. 从 DWD 当前 dt 分区读取订单明细
---   2. 用户维度按 customerid + 订单日期关联对应的 SCD2 历史版本
---   3. 商品、日期、地理维度关联当前 dt 快照
---   4. 使用 INSERT OVERWRITE 覆盖当前 dt 分区，保证任务幂等
---   5. order_line_id 增加 duplicate_seq，降低完全相同明细代理键重复风险
+--   2. date_id 使用 canonical 分区日期 dt（已通过全量质量门禁）
+--   3. invoicedate 仍是原始交易时间字段但不承担日期键解析
+--   4. 用户维度按 customerid + 业务日期关联对应的 SCD2 历史版本
+--   5. 商品、日期、地理维度关联当前 dt 快照
+--   6. 使用 INSERT OVERWRITE 覆盖当前 dt 分区，保证任务幂等
+--   7. order_line_id 增加 duplicate_seq，降低完全相同明细代理键重复风险
 -- =====================================================
 
-WITH dwd_parsed AS (
+WITH dwd_base AS (
     SELECT
         invoice,
         customerid,
@@ -17,30 +19,7 @@ WITH dwd_parsed AS (
         stockcode,
         quantity,
         amount,
-
-        CAST(
-            FROM_UNIXTIME(
-                UNIX_TIMESTAMP(
-                    invoicedate,
-                    'yyyy-MM-dd HH:mm:ss'
-                ),
-                'yyyy-MM-dd'
-            ) AS DATE
-        ) AS invoice_date
-
-    FROM dwd_retail_clean_hive
-    WHERE dt = '${hiveconf:bizdate}'
-),
-
-dwd_base AS (
-    SELECT
-        invoice,
-        customerid,
-        country,
-        stockcode,
-        quantity,
-        amount,
-        invoice_date,
+        CAST(dt AS DATE) AS invoice_date,
 
         ROW_NUMBER() OVER (
             PARTITION BY
@@ -48,7 +27,7 @@ dwd_base AS (
                 customerid,
                 country,
                 stockcode,
-                invoice_date,
+                CAST(dt AS DATE),
                 quantity,
                 amount
             ORDER BY
@@ -58,8 +37,8 @@ dwd_base AS (
                 country
         ) AS duplicate_seq
 
-    FROM dwd_parsed
-    WHERE invoice_date IS NOT NULL
+    FROM dwd_retail_clean_hive
+    WHERE dt = '${hiveconf:bizdate}'
 )
 
 INSERT OVERWRITE TABLE fact_order

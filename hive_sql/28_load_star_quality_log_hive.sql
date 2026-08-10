@@ -61,7 +61,9 @@ dim_user_metrics AS (
                 END
             ),
             0
-        ) AS invalid_current_end_date_cnt
+        ) AS invalid_current_end_date_cnt,
+
+        COALESCE(COUNT(1) - COUNT(DISTINCT user_id), 0) AS duplicate_user_id_cnt
 
     FROM dim_user
     WHERE dt = '${hiveconf:bizdate}'
@@ -78,6 +80,71 @@ duplicate_current_user_metrics AS (
           AND is_current = TRUE
         GROUP BY customerid
         HAVING COUNT(1) > 1
+    ) t
+),
+
+fact_orphan_key_metrics AS (
+    SELECT
+        COALESCE(COUNT(1), 0) AS orphan_fact_row_cnt
+    FROM fact_order f
+    LEFT JOIN dim_user u
+        ON f.user_id = u.user_id AND u.dt = '${hiveconf:bizdate}'
+    LEFT JOIN dim_product p
+        ON f.product_id = p.product_id AND p.dt = '${hiveconf:bizdate}'
+    LEFT JOIN dim_date d
+        ON f.date_id = d.date_id AND d.dt = '${hiveconf:bizdate}'
+    LEFT JOIN dim_geo g
+        ON f.geo_id = g.geo_id AND g.dt = '${hiveconf:bizdate}'
+    WHERE f.dt = '${hiveconf:bizdate}'
+      AND (u.user_id IS NULL OR p.product_id IS NULL OR d.date_id IS NULL OR g.geo_id IS NULL)
+),
+
+dwd_dimension_cardinality_metrics AS (
+    SELECT
+        COALESCE(SUM(
+            CASE WHEN user_match_cnt <> 1 THEN 1 ELSE 0 END +
+            CASE WHEN product_match_cnt <> 1 THEN 1 ELSE 0 END +
+            CASE WHEN date_match_cnt <> 1 THEN 1 ELSE 0 END +
+            CASE WHEN geo_match_cnt <> 1 THEN 1 ELSE 0 END
+        ), 0) AS cardinality_abnormal_cnt
+    FROM (
+        SELECT
+            dwd.invoice,
+            dwd.customerid,
+            dwd.stockcode,
+            dwd.country,
+            COALESCE(user_agg.user_match_cnt, 0) AS user_match_cnt,
+            COALESCE(product_agg.product_match_cnt, 0) AS product_match_cnt,
+            COALESCE(date_agg.date_match_cnt, 0) AS date_match_cnt,
+            COALESCE(geo_agg.geo_match_cnt, 0) AS geo_match_cnt
+        FROM dwd_retail_clean_hive dwd
+        LEFT JOIN (
+            SELECT customerid, COUNT(1) AS user_match_cnt
+            FROM dim_user
+            WHERE dt = '${hiveconf:bizdate}'
+              AND '${hiveconf:bizdate}' >= CAST(start_date AS STRING)
+              AND '${hiveconf:bizdate}' <= CAST(end_date AS STRING)
+            GROUP BY customerid
+        ) user_agg ON dwd.customerid = user_agg.customerid
+        LEFT JOIN (
+            SELECT stockcode, COUNT(1) AS product_match_cnt
+            FROM dim_product
+            WHERE dt = '${hiveconf:bizdate}'
+            GROUP BY stockcode
+        ) product_agg ON dwd.stockcode = product_agg.stockcode
+        LEFT JOIN (
+            SELECT date_id, COUNT(1) AS date_match_cnt
+            FROM dim_date
+            WHERE dt = '${hiveconf:bizdate}'
+            GROUP BY date_id
+        ) date_agg ON CAST(dwd.dt AS DATE) = date_agg.date_id
+        LEFT JOIN (
+            SELECT country, COUNT(1) AS geo_match_cnt
+            FROM dim_geo
+            WHERE dt = '${hiveconf:bizdate}'
+            GROUP BY country
+        ) geo_agg ON dwd.country = geo_agg.country
+        WHERE dwd.dt = '${hiveconf:bizdate}'
     ) t
 ),
 
@@ -114,7 +181,22 @@ fact_metrics AS (
         CAST(
             ROUND(COALESCE(SUM(amount), 0), 2)
             AS DECIMAL(38,6)
-        ) AS fact_total_amount
+        ) AS fact_total_amount,
+
+        COALESCE(SUM(
+            CASE WHEN user_id IS NULL THEN 1 ELSE 0 END +
+            CASE WHEN product_id IS NULL THEN 1 ELSE 0 END +
+            CASE WHEN date_id IS NULL THEN 1 ELSE 0 END +
+            CASE WHEN geo_id IS NULL THEN 1 ELSE 0 END
+        ), 0) AS null_foreign_key_cnt,
+
+        COALESCE(SUM(
+            CASE
+                WHEN date_id IS NULL THEN 1
+                WHEN CAST(date_id AS STRING) <> dt THEN 1
+                ELSE 0
+            END
+        ), 0) AS date_partition_inconsistent_cnt
 
     FROM fact_order
     WHERE dt = '${hiveconf:bizdate}'
@@ -141,6 +223,7 @@ all_metrics AS (
         du.dim_user_row_cnt,
         du.invalid_date_range_cnt,
         du.invalid_current_end_date_cnt,
+        du.duplicate_user_id_cnt,
         duc.duplicate_current_customer_cnt,
 
         dp.dim_product_row_cnt,
@@ -156,6 +239,11 @@ all_metrics AS (
         f.distinct_order_line_id_cnt,
         f.fact_user_cnt,
         f.fact_total_amount,
+        f.null_foreign_key_cnt,
+        fo.orphan_fact_row_cnt,
+        f.date_partition_inconsistent_cnt,
+
+        dc.cardinality_abnormal_cnt,
 
         sd.star_dws_row_cnt,
         sd.star_dws_total_amount
@@ -167,6 +255,8 @@ all_metrics AS (
     CROSS JOIN dim_geo_metrics dg
     CROSS JOIN dim_date_metrics dd
     CROSS JOIN fact_metrics f
+    CROSS JOIN fact_orphan_key_metrics fo
+    CROSS JOIN dwd_dimension_cardinality_metrics dc
     CROSS JOIN star_dws_metrics sd
 )
 
@@ -193,7 +283,7 @@ SELECT
 FROM all_metrics m
 
 LATERAL VIEW STACK(
-    12,
+    17,
 
     'dim_user',
     'STAR_001',
@@ -247,6 +337,19 @@ LATERAL VIEW STACK(
     CONCAT(
         'Current versions whose end_date is not 9999-12-31: ',
         CAST(m.invalid_current_end_date_cnt AS STRING),
+        ', expected 0'
+    ),
+
+    'dim_user',
+    'STAR_013',
+    'user_surrogate_key_unique',
+    'BLOCK',
+    CAST(m.duplicate_user_id_cnt AS BIGINT),
+    CAST(m.duplicate_user_id_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+        'Duplicate user_id in dim_user: ',
+        CAST(m.duplicate_user_id_cnt AS STRING),
         ', expected 0'
     ),
 
@@ -405,6 +508,58 @@ LATERAL VIEW STACK(
             m.fact_row_cnt - m.distinct_order_line_id_cnt
             AS STRING
         ),
+        ', expected 0'
+    ),
+
+    'fact_order',
+    'STAR_014',
+    'fact_foreign_key_not_null',
+    'BLOCK',
+    CAST(m.null_foreign_key_cnt AS BIGINT),
+    CAST(m.null_foreign_key_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+        'Null foreign keys in fact_order: ',
+        CAST(m.null_foreign_key_cnt AS STRING),
+        ', expected 0'
+    ),
+
+    'fact_order',
+    'STAR_015',
+    'fact_foreign_key_orphan_free',
+    'BLOCK',
+    CAST(m.orphan_fact_row_cnt AS BIGINT),
+    CAST(m.orphan_fact_row_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+        'Orphan fact rows with missing dimension: ',
+        CAST(m.orphan_fact_row_cnt AS STRING),
+        ', expected 0'
+    ),
+
+    'fact_order',
+    'STAR_016',
+    'dwd_dimension_match_cardinality',
+    'BLOCK',
+    CAST(m.cardinality_abnormal_cnt AS BIGINT),
+    CAST(m.cardinality_abnormal_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+        'DWD rows with abnormal dimension cardinality: ',
+        CAST(m.cardinality_abnormal_cnt AS STRING),
+        ', expected 0'
+    ),
+
+    'fact_order',
+    'STAR_017',
+    'fact_date_partition_consistent',
+    'BLOCK',
+    CAST(m.date_partition_inconsistent_cnt AS BIGINT),
+    CAST(m.date_partition_inconsistent_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+        'Fact rows with date_id not matching partition: ',
+        CAST(m.date_partition_inconsistent_cnt AS STRING),
         ', expected 0'
     ),
 
