@@ -67,7 +67,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(previous);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(previous);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -114,7 +114,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(previous);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(previous);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -154,7 +154,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(previous);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(previous);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -171,11 +171,10 @@ class SalesOverviewMetricServiceImplTest {
     // ==================== 边界情况处理 ====================
 
     @Test
-    @DisplayName("前一日数据不存在 - 应返回 comparisonAvailable=false")
-    void getComparison_previousDataNotAvailable_returnsFalse() {
+    @DisplayName("上一可用业务日不存在 - 应返回 comparisonAvailable=false")
+    void getComparison_previousAvailableNotExists_returnsFalse() {
         // Given
         LocalDate date = LocalDate.of(2026, 4, 8);
-        LocalDate comparisonDate = LocalDate.of(2026, 4, 7);
 
         SalesOverviewVO current = createVO(
                 date,
@@ -187,7 +186,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(null);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(null);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -195,7 +194,7 @@ class SalesOverviewMetricServiceImplTest {
         // Then
         assertFalse(result.isComparisonAvailable());
         assertEquals(date, result.getDate());
-        assertEquals(comparisonDate, result.getComparisonDate());
+        assertNull(result.getComparisonDate());
         assertNotNull(result.getCurrent());
         assertNull(result.getPrevious());
         assertNull(result.getChangePercent());
@@ -220,7 +219,7 @@ class SalesOverviewMetricServiceImplTest {
     }
 
     @Test
-    @DisplayName("前一日某项指标为 0 - 对应百分比应为 null")
+    @DisplayName("上一可用业务日某项指标为 0 - 对应百分比应为 null")
     void getComparison_previousMetricIsZero_correspondingPercentIsNull() {
         // Given
         LocalDate date = LocalDate.of(2026, 4, 8);
@@ -235,7 +234,7 @@ class SalesOverviewMetricServiceImplTest {
                 new BigDecimal("100.00")
         );
 
-        // 前一日 totalSales 为 0
+        // 上一可用业务日 totalSales 为 0
         SalesOverviewVO previous = createVO(
                 comparisonDate,
                 BigDecimal.ZERO,      // totalSales = 0
@@ -246,7 +245,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(previous);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(previous);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -289,7 +288,7 @@ class SalesOverviewMetricServiceImplTest {
         );
 
         when(salesOverviewMapper.selectByDate(eq(date))).thenReturn(current);
-        when(salesOverviewMapper.selectByDate(eq(comparisonDate))).thenReturn(previous);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(date), eq("test"))).thenReturn(previous);
 
         // When
         SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(date);
@@ -298,6 +297,54 @@ class SalesOverviewMetricServiceImplTest {
         assertTrue(result.isComparisonAvailable());
         // (1000 - 300) / 300 × 100 = 233.333... -> 233.33 (HALF_UP)
         assertEquals(new BigDecimal("233.33"), result.getChangePercent().getTotalSalesPercent());
+    }
+
+    // ==================== 日期缺口场景验证 ====================
+
+    @Test
+    @DisplayName("日期缺口场景 - 应使用上一可用业务日而非 minusDays(1)")
+    void getComparison_dateGap_shouldUsePreviousAvailableNotMinusDays() {
+        // Given: 模拟真实 canonical 数据缺口
+        // current date = 2009-12-13
+        // natural previous (2009-12-12) 无数据
+        // previous available date = 2009-12-11
+        LocalDate currentDate = LocalDate.of(2009, 12, 13);
+        LocalDate previousAvailableDate = LocalDate.of(2009, 12, 11);
+
+        SalesOverviewVO current = createVO(
+                currentDate,
+                new BigDecimal("1000.00"),
+                10L,
+                10L,
+                100L,
+                new BigDecimal("100.00")
+        );
+
+        SalesOverviewVO previous = createVO(
+                previousAvailableDate,
+                new BigDecimal("800.00"),
+                8L,
+                8L,
+                80L,
+                new BigDecimal("100.00")
+        );
+
+        when(salesOverviewMapper.selectByDate(eq(currentDate))).thenReturn(current);
+        when(salesOverviewMapper.selectPreviousAvailable(eq(currentDate), eq("test")))
+                .thenReturn(previous);
+
+        // When
+        SalesOverviewComparisonVO result = salesOverviewMetricService.getComparison(currentDate);
+
+        // Then
+        assertTrue(result.isComparisonAvailable(), "应能找到上一可用业务日");
+        assertEquals(previousAvailableDate, result.getComparisonDate(),
+                "comparisonDate 应为 2009-12-11，而非 2009-12-12");
+        assertEquals(previousAvailableDate, result.getPrevious().getDt(),
+                "previous.dt 应为 2009-12-11");
+        assertNotNull(result.getChangePercent(), "应计算环比");
+        assertEquals(new BigDecimal("25.00"), result.getChangePercent().getTotalSalesPercent(),
+                "环比应为 (1000-800)/800*100 = 25.00%");
     }
 
     // ==================== 辅助方法 ====================

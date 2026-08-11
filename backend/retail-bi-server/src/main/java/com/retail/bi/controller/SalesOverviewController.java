@@ -85,7 +85,7 @@ public class SalesOverviewController {
      * 请求示例：
      * GET /api/v1/dashboard/overview/comparison?date=2026-04-08
      *
-     * 返回当前日与前一日（date.minusDays(1)）的对比数据，
+     * 返回当前日与同一 source_system 下上一可用业务日期的对比数据，
      * 包含五项指标的环比变化百分比。
      */
     @GetMapping("/overview/comparison")
