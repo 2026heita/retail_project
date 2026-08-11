@@ -64,6 +64,8 @@ public class SalesOverviewMetricServiceImpl
     /**
      * 查询指定日期的销售概览日环比数据。
      *
+     * 比较口径：当前业务日 vs 同一 source_system 下的上一可用业务日。
+     *
      * @param date 业务日期
      * @return 日环比对比结果
      */
@@ -78,24 +80,27 @@ public class SalesOverviewMetricServiceImpl
             );
         }
 
-        // 查询前一日数据
-        LocalDate comparisonDate = date.minusDays(1);
-        SalesOverviewVO previous = salesOverviewMapper.selectByDate(comparisonDate);
+        // 查询同一 source_system 下上一可用业务日数据
+        SalesOverviewVO previous = salesOverviewMapper.selectPreviousAvailable(
+                date,
+                current.getSourceSystem()
+        );
 
         SalesOverviewComparisonVO result = new SalesOverviewComparisonVO();
         result.setDate(date);
-        result.setComparisonDate(comparisonDate);
         result.setCurrent(current);
 
-        // 前一日数据不存在时，comparisonAvailable=false
+        // 上一可用业务日不存在时，comparisonAvailable=false
         if (previous == null) {
+            result.setComparisonDate(null);
             result.setComparisonAvailable(false);
             result.setPrevious(null);
             result.setChangePercent(null);
             return result;
         }
 
-        // 前一日数据存在，计算环比
+        // 上一可用业务日存在，计算环比
+        result.setComparisonDate(previous.getDt());
         result.setComparisonAvailable(true);
         result.setPrevious(previous);
         result.setChangePercent(calculateChangePercent(current, previous));

@@ -1,16 +1,27 @@
 -- =====================================================
--- File: 00_load_ods_retail_hive.sql
--- Purpose: Load ODS Raw into normal ODS for a single bizdate
+-- File: 00_load_ods_retail_all_dates_hive.sql
+-- Purpose: One-time load all dates from ODS Raw to normal ODS
 -- Description:
---   1. Read from ods_retail_raw_hive (STRING columns)
---   2. Parse invoice_timestamp, parsed_quantity, parsed_price
---   3. Technical admission: all three must be non-NULL
---   4. Business issues (quantity<=0, returns, empty customerid, etc.)
+--   1. For canonical data first ingestion, no date loop
+--   2. Dynamic partition, dt parsed from InvoiceDate
+--   3. Parse invoice_timestamp, parsed_quantity, parsed_price
+--   4. Technical admission: all three must be non-NULL
+--   5. Business issues (quantity<=0, returns, empty customerid, etc.)
 --      are NOT filtered here; DWD handles those
---   5. Date formats: yyyy-MM-dd HH:mm:ss, yyyy-MM-dd HH:mm,
+--   6. Date formats: yyyy-MM-dd HH:mm:ss, yyyy-MM-dd HH:mm,
 --      d/M/yyyy HH:mm:ss, d/M/yyyy HH:mm
---   6. Read ODS Raw using batch_dt, write normal ODS using bizdate
+--   7. INSERT OVERWRITE ensures idempotent result
+--   8. Requires hive.exec.dynamic.partition=true and nonstrict
+-- Usage:
+--   hive --hiveconf batch_dt=2026-08-04 \
+--        -f 00_load_ods_retail_all_dates_hive.sql
 -- =====================================================
+
+SET hive.exec.dynamic.partition=true;
+SET hive.exec.dynamic.partition.mode=nonstrict;
+SET hive.exec.max.dynamic.partitions=2000;
+SET hive.exec.max.dynamic.partitions.pernode=2000;
+SET hive.exec.max.created.files=100000;
 
 WITH parsed_source AS (
     SELECT
@@ -45,7 +56,7 @@ WITH parsed_source AS (
 )
 
 INSERT OVERWRITE TABLE ods_retail_hive
-PARTITION (dt = '${hiveconf:bizdate}')
+PARTITION (dt)
 SELECT
     CAST(invoice AS STRING) AS invoice,
     CAST(stockcode AS STRING) AS stockcode,
@@ -54,9 +65,9 @@ SELECT
     CAST(invoicedate AS STRING) AS invoicedate,
     parsed_price AS price,
     TRIM(CAST(customerid AS STRING)) AS customerid,
-    CAST(country AS STRING) AS country
+    CAST(country AS STRING) AS country,
+    FROM_UNIXTIME(invoice_timestamp, 'yyyy-MM-dd') AS dt
 FROM parsed_source
 WHERE invoice_timestamp IS NOT NULL
   AND parsed_quantity IS NOT NULL
-  AND parsed_price IS NOT NULL
-  AND FROM_UNIXTIME(invoice_timestamp, 'yyyy-MM-dd') = '${hiveconf:bizdate}';
+  AND parsed_price IS NOT NULL;

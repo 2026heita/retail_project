@@ -13,10 +13,20 @@ set -Eeuo pipefail
 #   -> 结果展示
 # 用法:
 #   bash run_all_hive.sh 2026-04-08
+#
+# 可选环境变量:
+#   HIVE_DATABASE  目标数据库，默认 default
+#   BATCH_DT       ODS Raw 批次号，默认等于 BIZDATE
 # =====================================================
 
 BIZDATE="${1:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 可选环境变量
+HIVE_DATABASE="${HIVE_DATABASE:-default}"
+BATCH_DT="${BATCH_DT:-${BIZDATE}}"
+START_DT="${START_DT:-${BIZDATE}}"
+END_DT="${END_DT:-${BIZDATE}}"
 
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
@@ -32,6 +42,10 @@ fi
 
 BIZDATE="$(date -d "${BIZDATE}" +%F)"
 
+# 导出环境变量供子脚本使用
+export HIVE_DATABASE
+export BATCH_DT
+
 run_hive_sql() {
     local step_name="$1"
     local sql_file="$2"
@@ -40,6 +54,8 @@ run_hive_sql() {
     echo "${step_name}"
     echo "SQL: ${sql_file}"
     echo "bizdate: ${BIZDATE}"
+    echo "batch_dt: ${BATCH_DT}"
+    echo "database: ${HIVE_DATABASE}"
     echo "========================================"
 
     if [ ! -f "${sql_file}" ]; then
@@ -48,7 +64,11 @@ run_hive_sql() {
     fi
 
     if ! hive \
+        --database "${HIVE_DATABASE}" \
         --hiveconf bizdate="${BIZDATE}" \
+        --hiveconf batch_dt="${BATCH_DT}" \
+        --hiveconf start_dt="${START_DT}" \
+        --hiveconf end_dt="${END_DT}" \
         -f "${sql_file}"
     then
         echo "ERROR: failed at ${step_name}"
@@ -122,6 +142,8 @@ run_star_schema() {
 echo "========================================"
 echo "Start Hive complete warehouse job"
 echo "bizdate: ${BIZDATE}"
+echo "batch_dt: ${BATCH_DT}"
+echo "database: ${HIVE_DATABASE}"
 echo "base_dir: ${BASE_DIR}"
 echo "========================================"
 

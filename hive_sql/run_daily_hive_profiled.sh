@@ -19,8 +19,10 @@ set -Eeuo pipefail
 #     bash run_daily_hive_profiled.sh 2026-04-08 star
 #
 # 可选环境变量:
-#   RUN_REPORTS=1  执行详细 ODS 检查和最终结果展示，默认 0
-#   RUN_STAR=0     临时跳过星型模型，默认 1
+#   RUN_REPORTS=1      执行详细 ODS 检查和最终结果展示，默认 0
+#   RUN_STAR=0         临时跳过星型模型，默认 1
+#   HIVE_DATABASE      目标 Hive 数据库，默认 default
+#   BATCH_DT           ODS Raw 批次号，默认等于 BIZDATE
 # =====================================================
 
 BIZDATE="${1:-}"
@@ -30,6 +32,12 @@ PROJECT_DIR="$(cd "${BASE_DIR}/.." && pwd)"
 LOG_DIR="${PROJECT_DIR}/logs"
 RUN_REPORTS="${RUN_REPORTS:-0}"
 RUN_STAR="${RUN_STAR:-1}"
+
+# 数据库和批次配置
+HIVE_DATABASE="${HIVE_DATABASE:-default}"
+BATCH_DT="${BATCH_DT:-}"
+START_DT="${START_DT:-${BIZDATE}}"
+END_DT="${END_DT:-${BIZDATE}}"
 
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
@@ -89,12 +97,17 @@ run_hive_sql() {
     echo "${step_name}" | tee -a "${RUN_LOG}"
     echo "SQL: ${sql_file}" | tee -a "${RUN_LOG}"
     echo "bizdate: ${BIZDATE}" | tee -a "${RUN_LOG}"
+    echo "database: ${HIVE_DATABASE}" | tee -a "${RUN_LOG}"
     echo "========================================" | tee -a "${RUN_LOG}"
 
     start_ts="$(date +%s)"
 
     if hive \
+        --database "${HIVE_DATABASE}" \
         --hiveconf bizdate="${BIZDATE}" \
+        --hiveconf batch_dt="${BATCH_DT:-${BIZDATE}}" \
+        --hiveconf start_dt="${START_DT}" \
+        --hiveconf end_dt="${END_DT}" \
         -f "${sql_file}" 2>&1 | tee -a "${RUN_LOG}"
     then
         end_ts="$(date +%s)"

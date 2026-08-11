@@ -11,6 +11,9 @@ set -Eeuo pipefail
 BIZDATE="${1:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 可选环境变量
+HIVE_DATABASE="${HIVE_DATABASE:-default}"
+
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
     echo "Usage: bash run_result_quality_gate_hive.sh 2026-04-08"
@@ -27,16 +30,18 @@ BIZDATE="$(date -d "${BIZDATE}" +%F)"
 echo "========================================"
 echo "Start DWS/ADS result quality gate"
 echo "bizdate: ${BIZDATE}"
+echo "database: ${HIVE_DATABASE}"
 echo "========================================"
 
 # 1. 计算 DWS / ADS 质量指标并写入结果质量日志
 hive \
+    --database "${HIVE_DATABASE}" \
     --hiveconf bizdate="${BIZDATE}" \
     -f "${BASE_DIR}/27_load_result_quality_log_hive.sql"
 
 # 2. 统计 BLOCK 级失败项
 FAILED_COUNT=$(
-    hive -S -e "
+    hive --database "${HIVE_DATABASE}" -S -e "
         SELECT COUNT(1)
         FROM result_quality_log_hive
         WHERE dt='${BIZDATE}'
@@ -63,7 +68,7 @@ fi
 
 # WARN 只展示数量，不阻断
 WARN_COUNT=$(
-    hive -S -e "
+    hive --database "${HIVE_DATABASE}" -S -e "
         SELECT COUNT(1)
         FROM result_quality_log_hive
         WHERE dt='${BIZDATE}'

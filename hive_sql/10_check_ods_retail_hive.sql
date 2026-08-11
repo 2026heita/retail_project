@@ -5,7 +5,7 @@
 --   1. 检查指定 bizdate 的正常 ODS 分区数据概况
 --   2. 检查核心字段空值和数值异常
 --   3. 统计取消/退货订单，不将其直接视为技术异常
---   4. 日期解析异常直接从 ods_retail_reject_hive 统计
+--   4. Reject 表包含技术解析异常：日期解析失败、quantity 无法转 BIGINT、price 无法转 DECIMAL
 --   5. 本文件用于质量分析和告警，不承担入仓完整性阻断
 --   6. 入仓完整性门禁由 10_check_ods_ingestion_hive.sql 负责
 -- 执行:
@@ -78,7 +78,7 @@ SELECT
     '${hiveconf:bizdate}' AS bizdate,
     COUNT(*) AS reject_row_cnt
 FROM ods_retail_reject_hive
-WHERE batch_dt = '${hiveconf:bizdate}';
+WHERE batch_dt = '${hiveconf:batch_dt}';
 
 
 -- 6. Reject 异常数据分类统计
@@ -88,7 +88,7 @@ SELECT
     reject_reason,
     COUNT(*) AS reject_cnt
 FROM ods_retail_reject_hive
-WHERE batch_dt = '${hiveconf:bizdate}'
+WHERE batch_dt = '${hiveconf:batch_dt}'
 GROUP BY
     reject_code,
     reject_reason
@@ -128,5 +128,5 @@ SELECT
     reject_reason,
     batch_dt
 FROM ods_retail_reject_hive
-WHERE batch_dt = '${hiveconf:bizdate}'
+WHERE batch_dt = '${hiveconf:batch_dt}'
 LIMIT 20;

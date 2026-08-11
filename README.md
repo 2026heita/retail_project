@@ -10,7 +10,7 @@
 
 - **单日经营概览**：查看指定日期的销售额、订单数、客户数、销量、客单价五项 KPI
 - **多日趋势分析**：按日期范围查询经营趋势，支持前端时间序列图展示
-- **日环比分析**：对比当前日与前一日，计算五项指标的环比变化百分比
+- **日环比分析**：对比当前日与同一 source_system 下上一可用业务日，计算五项指标的环比变化百分比
 
 项目重点不是堆叠技术名词，而是展示一条可以解释、可以重跑、可以对账、可以验收的工程链路：
 
@@ -32,7 +32,7 @@
 | 方向 | 已完成内容 |
 |---|---|
 | 数仓分层 | ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS、星型模型 |
-| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 12 条规则 |
+| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则 |
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
 | 维度建模 | 每日完整快照式 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
@@ -50,7 +50,7 @@ DWD / fact_order       2,416,593 行
 国家数                        41
 销售额             53,230,287.48
 高价值客户销售贡献率       86.68%
-星型模型质量规则          12 / 12 PASS
+星型模型质量规则          12 / 12 PASS（历史工程验证，当时为12条规则）
 ```
 
 ### 数据来源与口径
@@ -307,7 +307,7 @@ ODS 入仓完整性
 |---|---:|---|
 | DWD | 6 | 无效数量、无效价格、空客户、分区非空、行数对账、时间格式 |
 | DWS / ADS | 11 | 金额对账、核心结果非空、占比汇总、贡献率范围 |
-| 星型模型 | 12 | SCD2 唯一性、事实表主键、行数与金额对账、维度关联 |
+| 星型模型 | 17 | SCD2 唯一性、事实表主键、行数与金额对账、维度关联 |
 
 处理方式：
 
@@ -570,16 +570,16 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
 GET /api/v1/dashboard/overview/comparison?date=2026-04-08
 ```
 
-功能：对比当前日与前一日（`date.minusDays(1)`）的经营数据，计算五项指标的环比变化百分比。
+功能：对比当前日与同一 source_system 下上一可用业务日期的经营数据，计算五项指标的环比变化百分比。
 
 规则：
 
 - `date` 必填，格式为 `yyyy-MM-dd`；
 - 不能晚于当前日期；
 - 当前日无数据时返回 `404`；
-- 前一日无数据时返回 `200`，`comparisonAvailable=false`，`previous` 和 `changePercent` 为 `null`；
+- 上一可用业务日不存在时返回 `200`，`comparisonAvailable=false`，`comparisonDate`、`previous` 和 `changePercent` 为 `null`；
 - 环比公式：`(current - previous) / previous × 100`，使用 `BigDecimal` 计算，保留两位小数；
-- 前一日某项指标为 0 时，对应百分比返回 `null`，避免除以 0。
+- 上一可用业务日某项指标为 0 时，对应百分比返回 `null`，避免除以 0。
 
 业务接口使用统一 `ApiResponse`。`RequestIdFilter` 会读取或生成 `X-Request-Id`，写入响应头和 MDC；业务响应体同时返回 `requestId`，便于关联前后端日志。
 
@@ -626,11 +626,23 @@ DWD / fact_order 金额     53,230,287.48
 
 ```text
 MySQL 数据质量门禁       20 / 20 PASS
-星型模型质量门禁         12 / 12 PASS
+星型模型质量门禁         12 / 12 PASS（历史工程验证，当时为12条规则）
 MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 ```
 
-### 10.2 历史多日验证
+### 10.2 Canonical 真实 SCD2 验证
+
+**验证范围**：Star 历史已连续回刷并验证至 2010-03-04，覆盖 73 个真实业务日期；其中在 2010-03-04 对 customerid=12431 的 Belgium → Australia 真实属性变化进行了重点 SCD2 验证。完整 DWD 保留 604 个真实业务日期。
+
+**SCD2 版本变化（customerid=12431）**：
+![SCD2 版本变化验证](docs/canonical_validation_screenshots/customer_12431_scd2_change_20100304.png)
+> 证明：Belgium 旧版本（user_id=5b3505b2200cc7e59ae46e9c5a199e99）关闭至 2010-03-03，is_current=false；Australia 新版本（user_id=57d1ccdac3e283cfd7d9eeb640f56ef5）从 2010-03-04 生效，is_current=true。
+
+**事实表关联 SCD2 新验证（customerid=12431，2010-03-04）**：
+![事实表关联 SCD2 新版本验证](docs/canonical_validation_screenshots/customer_12431_fact_version_join_20100304.png)
+> 证明：2010-03-04 fact_order 正确关联 Australia 新 user_id=57d1ccdac3e283cfd7d9eeb640f56ef5，fact_rows=17，fact_amount=394.59。
+
+### 10.3 历史多日验证
 
 `docs/multiday_validation_screenshots/` 保存了较早数据版本的多日分区、区间回刷、幂等性和 T+1 验证截图。
 
@@ -638,7 +650,7 @@ MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 
 ### 10.3 BI 应用链路
 
-已验证：
+**历史工程验证（engineering_legacy_3x）**：
 
 ```text
 Hive ads_sales_overview_daily_hive
@@ -649,6 +661,31 @@ Hive ads_sales_overview_daily_hive
 ```
 
 趋势接口已返回 `2026-04-01` 至 `2026-04-08` 共 8 行数据，并保留 `sourceSystem=hive_ads`。
+
+**Canonical 真实数据验证**：
+
+Hive ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
+
+![Canonical ADS 全范围验证](docs/canonical_validation_screenshots/canonical_ads_sales_overview_full_validation.png)
+> 验证结果：row_count=604，distinct_dt=604，min_dt=2009-12-01，max_dt=2011-12-09，total_sales=17,743,429.16。
+
+Hive → MySQL 同步已完成全范围验证：
+
+![Canonical Hive-MySQL 同步验证](docs/canonical_validation_screenshots/canonical_hive_mysql_full_sync_validation.png)
+> 验证结果：source_rows=604，target_rows=604，日期范围 2009-12-01 ~ 2011-12-09，total_sales=17,743,429.16，逐行对账 PASS。
+> MySQL 中保留两组数据：旧历史展示数据（source_system=hive_ads，8 行，2026-04-01 ~ 2026-04-08）和 canonical 数据（source_system=retail_canonical_ads，604 行）。
+
+Spring Boot API 已真实连接 canonical serving 数据：
+
+![Canonical Spring API 趋势验证](docs/canonical_validation_screenshots/canonical_spring_api_trend_validation.png)
+> 趋势接口真实验证 2009-12-01 ~ 2009-12-03，返回数据与 Hive ADS / MySQL 完全一致，sourceSystem=retail_canonical_ads。
+
+Spring Boot 环比业务语义已修正并真实验证：
+
+![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
+> 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
+> 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
+> Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
 
 ---
 
@@ -775,9 +812,9 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 其他边界：
 
 - DolphinScheduler JSON 尚未覆盖 Shell 完整 20 步主链路；
-- Reject 当前主要覆盖日期异常；
+- 当前 canonical 已验收基线 reject=0；新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑；
 - SCD2 历史回刷保护仍是独立脚本；
-- 当前实际 SCD2 回归只覆盖一个业务日期分区；
+- Star 历史已连续回刷并验证至 2010-03-04，覆盖 73 个真实业务日期；其中在 2010-03-04 对 customerid=12431 的 Belgium → Australia 真实属性变化进行了重点 SCD2 验证。完整 DWD 保留 604 个真实业务日期；
 - 幂等性指纹当前只覆盖 8 张核心表；
 - 历史截图和当前完整回归不是同一数据基线。
 

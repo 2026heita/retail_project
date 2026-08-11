@@ -1,41 +1,57 @@
 -- =====================================================
--- 文件名: 04_dws_sales_summary_hive.sql
--- 功能: 生成 DWS 国家销售汇总表
--- 优化: country 倾斜处理，两阶段聚合 + 安全 CAST
+-- File: 04_dws_sales_summary_hive.sql
+-- Purpose: Build DWS country sales summary table
+-- Description:
+--   1. Read DWD data within date range [start_dt, end_dt]
+--   2. All stages carry dt for daily granularity
+--   3. Deterministic CRC32 salt for United Kingdom skew
+--   4. Two-phase aggregation: salt -> country
+--   5. Use existing amount field from DWD (not quantity * price)
+--   6. Dynamic partition write by dt
+--   7. Single-day mode: start_dt = end_dt = bizdate
+-- Usage:
+--   hive --hiveconf bizdate=2026-04-08 \
+--        --hiveconf start_dt=2026-04-08 \
+--        --hiveconf end_dt=2026-04-08 \
+--        -f 04_dws_sales_summary_hive.sql
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS dws_sales_summary_hive (
-    country STRING COMMENT '国家',
-    total_orders BIGINT COMMENT '订单数',
-    total_customers BIGINT COMMENT '客户数',
-    total_sales DECIMAL(14,2) COMMENT '销售总额',
-    avg_order_value DECIMAL(14,2) COMMENT '平均订单金额'
+    country STRING COMMENT 'Country',
+    total_orders BIGINT COMMENT 'Order count',
+    total_customers BIGINT COMMENT 'Customer count',
+    total_sales DECIMAL(14,2) COMMENT 'Total sales',
+    avg_order_value DECIMAL(14,2) COMMENT 'Average order value'
 )
-COMMENT 'DWS 国家销售汇总表'
-PARTITIONED BY (dt STRING COMMENT '业务日期')
+COMMENT 'DWS country sales summary'
+PARTITIONED BY (dt STRING COMMENT 'Business date')
 STORED AS ORC;
-
 
 SET hive.exec.dynamic.partition=true;
 SET hive.exec.dynamic.partition.mode=nonstrict;
+SET hive.exec.max.dynamic.partitions=2000;
+SET hive.exec.max.dynamic.partitions.pernode=2000;
+SET hive.exec.max.created.files=100000;
 SET hive.groupby.skewindata=false;
 
 WITH base AS (
     SELECT
+        dt,
         country,
         invoice,
         stockcode,
         customerid,
         invoicedate,
-        CAST(COALESCE(quantity,0) * COALESCE(price,0) AS DECIMAL(14,2)) AS amount
+        amount
     FROM dwd_retail_clean_hive
-    WHERE dt='${hiveconf:bizdate}'
+    WHERE dt >= '${hiveconf:start_dt}'
+      AND dt <= '${hiveconf:end_dt}'
 ),
 
--- 1. 对严重倾斜的 United Kingdom 做确定性 salt
---    使用 CRC32 基于稳定业务字段生成盐值，保证同一记录每次执行得到相同盐值
+-- 1. Deterministic salt for United Kingdom skew
 sales_salted AS (
     SELECT
+        dt,
         country,
         CASE
             WHEN country = 'United Kingdom'
@@ -56,54 +72,58 @@ sales_salted AS (
     FROM base
 ),
 
--- 2. 阶段1聚合
+-- 2. Phase 1 aggregation by dt, country, salt_key
 sales_stage1 AS (
     SELECT
+        dt,
         country,
         salt_key,
         SUM(amount) AS partial_sales
     FROM sales_salted
-    GROUP BY country, salt_key
+    GROUP BY dt, country, salt_key
 ),
 
--- 3. 阶段2汇总回 country
+-- 3. Phase 2 aggregation back to country by dt
 sales_final AS (
     SELECT
+        dt,
         country,
         CAST(SUM(partial_sales) AS DECIMAL(14,2)) AS total_sales
     FROM sales_stage1
-    GROUP BY country
+    GROUP BY dt, country
 ),
 
--- 4. 订单数：按 country+invoice 去重
+-- 4. Order count: deduplicate by dt, country, invoice
 order_final AS (
     SELECT
+        dt,
         country,
         COUNT(*) AS total_orders
     FROM (
-        SELECT country, invoice
+        SELECT dt, country, invoice
         FROM base
-        GROUP BY country, invoice
+        GROUP BY dt, country, invoice
     ) t
-    GROUP BY country
+    GROUP BY dt, country
 ),
 
--- 5. 客户数：按 country+customerid 去重
+-- 5. Customer count: deduplicate by dt, country, customerid
 customer_final AS (
     SELECT
+        dt,
         country,
         COUNT(*) AS total_customers
     FROM (
-        SELECT country, customerid
+        SELECT dt, country, customerid
         FROM base
-        GROUP BY country, customerid
+        GROUP BY dt, country, customerid
     ) t
-    GROUP BY country
+    GROUP BY dt, country
 )
 
--- 6. 最终插入 DWS 表
+-- 6. Final insert with dynamic partition
 INSERT OVERWRITE TABLE dws_sales_summary_hive
-PARTITION (dt='${hiveconf:bizdate}')
+PARTITION (dt)
 SELECT
     s.country,
     o.total_orders,
@@ -114,9 +134,12 @@ SELECT
             WHEN o.total_orders = 0 THEN 0
             ELSE s.total_sales / o.total_orders
         END AS DECIMAL(14,2)
-    ) AS avg_order_value
+    ) AS avg_order_value,
+    s.dt
 FROM sales_final s
 LEFT JOIN order_final o
-    ON s.country = o.country
+    ON s.dt = o.dt
+   AND s.country = o.country
 LEFT JOIN customer_final c
-    ON s.country = c.country;
+    ON s.dt = c.dt
+   AND s.country = c.country;

@@ -49,4 +49,28 @@ public interface SalesOverviewMapper {
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+
+    /**
+     * 查询指定日期之前、同一 source_system 下的上一可用业务日数据。
+     * 用于日环比计算，解决业务日期存在缺口的问题。
+     */
+    @Select("""
+            SELECT
+                dt,
+                total_sales AS totalSales,
+                total_orders AS totalOrders,
+                total_customers AS totalCustomers,
+                total_quantity AS totalQuantity,
+                avg_order_value AS avgOrderValue,
+                source_system AS sourceSystem
+            FROM bi_sales_overview_daily
+            WHERE dt < #{date}
+              AND source_system = #{sourceSystem}
+            ORDER BY dt DESC
+            LIMIT 1
+            """)
+    SalesOverviewVO selectPreviousAvailable(
+            @Param("date") LocalDate date,
+            @Param("sourceSystem") String sourceSystem
+    );
 }

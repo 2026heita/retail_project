@@ -172,8 +172,8 @@ GET /api/v1/dashboard/overview/comparison?date=2026-04-08
 - 不能晚于当前日期
 
 **口径说明：**
-- 比较日期固定为前一自然日：`comparisonDate = date.minusDays(1)`
-- 不自动选择数据库中最近有数据的日期
+- 比较日期为同一 source_system 下上一可用业务日
+- 自动选择数据库中最近有数据的日期（处理业务日期缺口场景）
 
 **环比公式：**
 ```
@@ -187,13 +187,13 @@ changePercent = (current - previous) / previous × 100
 
 **基准日缺失处理：**
 - 当前日数据不存在：返回 404 业务异常
-- 前一日数据不存在：返回 HTTP 200，`comparisonAvailable=false`，`previous` 和 `changePercent` 为 `null`
+- 上一可用业务日数据不存在：返回 HTTP 200，`comparisonAvailable=false`，`comparisonDate`、`previous` 和 `changePercent` 为 `null`
 
 **除零处理：**
-- 前一日某项指标为 0 时，对应百分比返回 `null`，其他指标正常计算
+- 上一可用业务日某项指标为 0 时，对应百分比返回 `null`，其他指标正常计算
 - 不允许除以 0
 
-**响应示例（前一日数据存在）：**
+**响应示例（上一可用业务日数据存在）：**
 
 ```json
 {
@@ -233,7 +233,7 @@ changePercent = (current - previous) / previous × 100
 }
 ```
 
-**响应示例（前一日数据不存在）：**
+**响应示例（上一可用业务日数据不存在）：**
 
 ```json
 {

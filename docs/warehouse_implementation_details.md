@@ -274,7 +274,7 @@ flowchart TB
 
 &#x20;   F --> SDWS\["dws\_customer\_value\_star\_hive"]
 
-&#x20;   SDWS --> G3\["星型模型门禁<br/>12 条 BLOCK 规则"]
+&#x20;   SDWS --> G3\["星型模型门禁<br/>17 条 BLOCK 规则"]
 
 ```
 
@@ -1539,7 +1539,7 @@ run\_star\_schema\_hive.sh
 
 run\_star\_quality\_gate\_hive.sh
 
-执行 12 条星型模型规则。
+执行 17 条星型模型规则。
 
 
 
@@ -1831,7 +1831,7 @@ hive\_sql/10\_check\_ods\_retail\_hive.sql
 
 28\_load\_star\_quality\_log\_hive.sql
 
-创建并写入 12 条星型模型规则。
+创建并写入 17 条星型模型规则。
 
 ```
 
@@ -2915,29 +2915,42 @@ DWD = 2,416,593
 
 \### 15.3 BI 应用链路验证
 
-
-
-已验证完整链路：
-
-
+**历史工程验证（engineering_legacy_3x）**：
 
 ```text
-
-Hive ads\_sales\_overview\_daily\_hive
-
-→ sync/01\_sync\_sales\_overview\_to\_mysql.sh
-
-→ MySQL bi\_sales\_overview\_daily
-
+Hive ads_sales_overview_daily_hive
+→ sync/01_sync_sales_overview_to_mysql.sh
+→ MySQL bi_sales_overview_daily
 → Spring Boot trend API
-
 → React 时间趋势
-
 ```
 
+趋势接口已返回 `2026-04-01` 至 `2026-04-08` 共 8 行数据，并保留 `sourceSystem=hive_ads`。
 
+**Canonical 真实数据验证**：
 
-趋势接口已返回 `2026-04-01` 至 `2026-04-08` 共 8 行数据，并保留 `sourceSystem=hive\_ads`。
+Hive ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
+
+![Canonical ADS 全范围验证](docs/canonical_validation_screenshots/canonical_ads_sales_overview_full_validation.png)
+> 验证结果：row_count=604，distinct_dt=604，min_dt=2009-12-01，max_dt=2011-12-09，total_sales=17,743,429.16。
+
+Hive → MySQL 同步已完成全范围验证：
+
+![Canonical Hive-MySQL 同步验证](docs/canonical_validation_screenshots/canonical_hive_mysql_full_sync_validation.png)
+> 验证结果：source_rows=604，target_rows=604，日期范围 2009-12-01 ~ 2011-12-09，total_sales=17,743,429.16，逐行对账 PASS。
+> MySQL 中保留两组数据：旧历史展示数据（source_system=hive_ads，8 行，2026-04-01 ~ 2026-04-08）和 canonical 数据（source_system=retail_canonical_ads，604 行）。
+
+Spring Boot API 已真实连接 canonical serving 数据：
+
+![Canonical Spring API 趋势验证](docs/canonical_validation_screenshots/canonical_spring_api_trend_validation.png)
+> 趋势接口真实验证 2009-12-01 ~ 2009-12-03，返回数据与 Hive ADS / MySQL 完全一致，sourceSystem=retail_canonical_ads。
+
+Spring Boot 环比业务语义已修正并真实验证：
+
+![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
+> 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
+> 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
+> Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
 
 
 
@@ -3249,7 +3262,7 @@ ${PROJECT\_HOME}/hive/
 
 \- DolphinScheduler JSON 尚未同步 Shell 完整 20 步链路；
 
-\- 当前 Reject 只覆盖日期为空和日期解析失败；
+\- 当前 canonical 已验收基线 reject=0；新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前仅完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑。
 
 \- SCD2 回刷保护脚本尚未自动接入主入口；
 
@@ -3266,12 +3279,13 @@ ${PROJECT\_HOME}/hive/
 \- 项目没有内置 MySQL 到 Hive 自动同步链路；
 
 \- Spring Boot 当前只提供经营总览单日和 31 天内趋势查询；
-
-\- Java 当前读取预聚合日指标，不提供订单明细钻取、分页或任意维度动态聚合；
-
-\- 后端尚未加入登录权限、缓存、OpenAPI、Docker 和生产级 CI/CD；
-
-\- 当前 CORS 只允许本机开发前端，公网部署需要单独配置正式域名和安全策略。
+- Java 当前读取预聚合日指标，不提供订单明细钻取、分页或任意维度动态聚合；
+- 后端尚未加入登录权限、缓存、OpenAPI、Docker 和生产级 CI/CD；
+- 当前 CORS 只允许本机开发前端，公网部署需要单独配置正式域名和安全策略；
+- Hive ADS 范围写入采用动态分区，一次范围式 ADS DML 覆盖 604 个真实业务日期；脚本仍保留独立的 DWD 前置检查和 ADS 后置验证查询；
+- Hive → MySQL 同步采用范围式一次 Hive 查询 + 批量 MySQL UPSERT，不是逐日同步；
+- 跨系统 DECIMAL 对账需要按数值类型比较，避免 Hive 输出 341.4 与 MySQL DECIMAL 输出 341.40 的字符串格式差异导致假失败；
+- Spring Boot 环比接口当前使用"同一 source_system 下上一可用业务日"语义，不是固定"前一日（date.minusDays(1)）"，以应对真实业务日期存在缺口的情况。
 
 
 

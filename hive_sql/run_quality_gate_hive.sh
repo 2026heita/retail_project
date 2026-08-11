@@ -11,6 +11,9 @@ set -Eeuo pipefail
 BIZDATE="${1:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 可选环境变量
+HIVE_DATABASE="${HIVE_DATABASE:-default}"
+
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
     echo "Usage: bash run_quality_gate_hive.sh 2026-07-18"
@@ -27,21 +30,24 @@ BIZDATE="$(date -d "${BIZDATE}" +%F)"
 echo "========================================"
 echo "Start Hive data quality gate"
 echo "bizdate: ${BIZDATE}"
+echo "database: ${HIVE_DATABASE}"
 echo "========================================"
 
 # 1. 确保质量日志表存在
 hive \
+    --database "${HIVE_DATABASE}" \
     --hiveconf bizdate="${BIZDATE}" \
     -f "${BASE_DIR}/23_quality_log_hive.sql"
 
 # 2. 计算质量指标并写入质量日志
 hive \
+    --database "${HIVE_DATABASE}" \
     --hiveconf bizdate="${BIZDATE}" \
     -f "${BASE_DIR}/24_load_quality_log_hive.sql"
 
 # 3. 查询当天失败项数量
 FAILED_COUNT=$(
-    hive -S -e "
+    hive --database "${HIVE_DATABASE}" -S -e "
         SELECT COUNT(1)
         FROM quality_log_hive
         WHERE dt='${BIZDATE}'

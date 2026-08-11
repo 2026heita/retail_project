@@ -5,11 +5,17 @@
 --   1. 避免 JOIN + LATERAL VIEW STACK + UNION ALL 组合
 --   2. 使用临时表物化当天用户和上一快照，降低 CTE 重复展开
 --   3. 适配 Hive 3.1.3 + MapReduce 执行环境
+--   4. 支持四种日期格式: yyyy-MM-dd HH:mm:ss, yyyy-MM-dd HH:mm,
+--      d/M/yyyy HH:mm:ss, d/M/yyyy HH:mm
+--   5. 每个 customerid 选择当天时间最新的 country，
+--      时间相同时按 country 升序保证唯一
+-- 会话隔离要求:
+--   1. 该 SQL 必须在每个业务日独立的 Hive CLI 会话中运行
+--   2. 临时表由会话自动清理，无需显式 DROP TABLE
+--   3. 不允许为了区间化而把多个业务日放入同一个 Hive 会话重复执行该 SQL
+--   4. 区间回刷时，每个业务日必须启动独立的 Hive CLI 进程
 -- =====================================================
 
-DROP TABLE IF EXISTS tmp_dim_user_today;
-DROP TABLE IF EXISTS tmp_dim_user_prev_all;
-DROP TABLE IF EXISTS tmp_dim_user_prev_current;
 
 CREATE TEMPORARY TABLE tmp_dim_user_today
 STORED AS ORC
@@ -24,11 +30,13 @@ FROM (
         ROW_NUMBER() OVER (
             PARTITION BY customerid
             ORDER BY
-                UNIX_TIMESTAMP(
-                    invoicedate,
-                    'yyyy-MM-dd HH:mm:ss'
+                COALESCE(
+                    UNIX_TIMESTAMP(TRIM(invoicedate), 'yyyy-MM-dd HH:mm:ss'),
+                    UNIX_TIMESTAMP(TRIM(invoicedate), 'yyyy-MM-dd HH:mm'),
+                    UNIX_TIMESTAMP(TRIM(invoicedate), 'd/M/yyyy HH:mm:ss'),
+                    UNIX_TIMESTAMP(TRIM(invoicedate), 'd/M/yyyy HH:mm')
                 ) DESC,
-                country
+                country ASC
         ) AS rn
     FROM dwd_retail_clean_hive
     WHERE dt = '${hiveconf:bizdate}'

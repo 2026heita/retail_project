@@ -36,15 +36,14 @@ SELECT
     -- 2. 仅对“纯数字+.0”形式去除末尾.0
     -- 3. 非纯数字ID保留原值
     CASE
-        WHEN TRIM(CAST(customerid AS STRING))
-             RLIKE '^[0-9]+[.]0$'
-        THEN REGEXP_REPLACE(
-            TRIM(CAST(customerid AS STRING)),
-            '[.]0$',
-            ''
-        )
-        ELSE TRIM(CAST(customerid AS STRING))
-    END AS customerid,
+    WHEN TRIM(CAST(customerid AS STRING)) RLIKE '^[0-9]+[.]0$'
+    THEN REGEXP_REPLACE(
+        TRIM(CAST(customerid AS STRING)),
+        '[.]0$',
+        ''
+    )
+    ELSE TRIM(CAST(customerid AS STRING))
+END AS customerid,
 
     -- 国家：仅清理首尾空格
     TRIM(country) AS country,
