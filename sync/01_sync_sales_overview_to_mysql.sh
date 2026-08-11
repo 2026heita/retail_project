@@ -4,11 +4,16 @@ set -Eeuo pipefail
 
 # ============================================================
 # 文件名：01_sync_sales_overview_to_mysql.sh
-# 功能：将 Hive ADS 经营总览指标同步到 MySQL
-# 用法：bash 01_sync_sales_overview_to_mysql.sh 2026-04-08
+# 功能：将 Hive ADS 经营总览指标同步到 MySQL（单日）
+# 用法：
+#   HIVE_DATABASE=retail_canonical \
+#   bash 01_sync_sales_overview_to_mysql.sh 2010-03-04
 # ============================================================
 
 BIZDATE="${1:-}"
+
+HIVE_DATABASE="${HIVE_DATABASE:-retail_canonical}"
+SOURCE_SYSTEM="${SOURCE_SYSTEM:-retail_canonical_ads}"
 
 MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -30,13 +35,15 @@ fi
 echo "=========================================="
 echo "开始同步经营总览数据"
 echo "业务日期：${BIZDATE}"
+echo "hive_database：${HIVE_DATABASE}"
+echo "source_system：${SOURCE_SYSTEM}"
 echo "=========================================="
 
 # ------------------------------------------------------------
 # 1. 从 Hive ADS 中读取指定日期数据
 # ------------------------------------------------------------
-mapfile -t SOURCE_ROWS < <(
-    hive -S -e "
+HIVE_OUTPUT="$(
+    hive --database "${HIVE_DATABASE}" -S -e "
 SELECT
     CONCAT_WS(
         '\t',
@@ -49,8 +56,13 @@ SELECT
     )
 FROM ads_sales_overview_daily_hive
 WHERE dt = '${BIZDATE}';
-" | awk 'NF'
-)
+"
+)" || {
+    echo "错误：Hive 查询失败，退出。"
+    exit 1
+}
+
+mapfile -t SOURCE_ROWS < <(echo "${HIVE_OUTPUT}" | awk 'NF')
 
 SOURCE_COUNT="${#SOURCE_ROWS[@]}"
 
@@ -137,7 +149,7 @@ VALUES (
     ${TOTAL_CUSTOMERS},
     ${TOTAL_QUANTITY},
     ${AVG_ORDER_VALUE},
-    'hive_ads'
+    '${SOURCE_SYSTEM}'
 )
 ON DUPLICATE KEY UPDATE
     total_sales = ${TOTAL_SALES},
@@ -145,7 +157,7 @@ ON DUPLICATE KEY UPDATE
     total_customers = ${TOTAL_CUSTOMERS},
     total_quantity = ${TOTAL_QUANTITY},
     avg_order_value = ${AVG_ORDER_VALUE},
-    source_system = 'hive_ads';
+    source_system = '${SOURCE_SYSTEM}';
 SQL
 
 echo "MySQL 写入完成。"
@@ -201,10 +213,66 @@ WHERE dt = '${BIZDATE}';
 echo "MySQL 目标端数据："
 echo "${TARGET_ROW}"
 
-if [[ "${SOURCE_ROW}" != "${TARGET_ROW}" ]]; then
-    echo "同步失败：Hive 与 MySQL 数据不一致。"
-    echo "Hive ：${SOURCE_ROW}"
-    echo "MySQL：${TARGET_ROW}"
+IFS=$'\t' read -r \
+    TARGET_DT \
+    TARGET_SALES \
+    TARGET_ORDERS \
+    TARGET_CUSTOMERS \
+    TARGET_QUANTITY \
+    TARGET_AVG \
+    <<< "${TARGET_ROW}"
+
+# DECIMAL 字段按数值语义比较，避免 341.4 与 341.40 这类展示格式差异误报。
+# 当前业务字段为 DECIMAL(18,2)，0.001 小于最小有效差异 0.01。
+decimal_equal() {
+    local left="$1"
+    local right="$2"
+
+    awk -v a="${left}" -v b="${right}" '
+        BEGIN {
+            diff = a - b;
+            if (diff < 0) {
+                diff = -diff;
+            }
+            exit !(diff <= 0.001);
+        }
+    '
+}
+
+MISMATCH_COUNT=0
+
+if [[ "${DT}" != "${TARGET_DT}" ]]; then
+    echo "dt 不一致：Hive=${DT}, MySQL=${TARGET_DT}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if ! decimal_equal "${TOTAL_SALES}" "${TARGET_SALES}"; then
+    echo "total_sales 不一致：Hive=${TOTAL_SALES}, MySQL=${TARGET_SALES}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if [[ "${TOTAL_ORDERS}" != "${TARGET_ORDERS}" ]]; then
+    echo "total_orders 不一致：Hive=${TOTAL_ORDERS}, MySQL=${TARGET_ORDERS}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if [[ "${TOTAL_CUSTOMERS}" != "${TARGET_CUSTOMERS}" ]]; then
+    echo "total_customers 不一致：Hive=${TOTAL_CUSTOMERS}, MySQL=${TARGET_CUSTOMERS}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if [[ "${TOTAL_QUANTITY}" != "${TARGET_QUANTITY}" ]]; then
+    echo "total_quantity 不一致：Hive=${TOTAL_QUANTITY}, MySQL=${TARGET_QUANTITY}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if ! decimal_equal "${AVG_ORDER_VALUE}" "${TARGET_AVG}"; then
+    echo "avg_order_value 不一致：Hive=${AVG_ORDER_VALUE}, MySQL=${TARGET_AVG}"
+    MISMATCH_COUNT=$((MISMATCH_COUNT + 1))
+fi
+
+if [[ "${MISMATCH_COUNT}" -gt 0 ]]; then
+    echo "同步失败：Hive 与 MySQL 存在 ${MISMATCH_COUNT} 个字段不一致。"
     exit 1
 fi
 
