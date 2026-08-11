@@ -1163,6 +1163,10 @@ DWD 2,416,593
 10. 轻量 BI Dashboard 只有截图，没有生成脚本。
 11. 单机虚拟机完整链路约 30 分钟，尚未深度重构。
 12. 项目没有内置 MySQL 到 Hive 的自动同步。
+13. Hive ADS 范围写入采用动态分区，一次范围式 ADS DML 覆盖 604 个真实业务日期；脚本仍保留独立的 DWD 前置检查和 ADS 后置验证查询。
+14. Hive → MySQL 同步采用范围式一次 Hive 查询 + 批量 MySQL UPSERT，不是逐日同步。
+15. 跨系统 DECIMAL 对账需要按数值类型比较，避免 Hive 输出 341.4 与 MySQL DECIMAL 输出 341.40 的字符串格式差异导致假失败。
+16. Spring Boot 环比接口当前使用"同一 source_system 下上一可用业务日"语义，不是固定"前一日（date.minusDays(1)）"，以应对真实业务日期存在缺口的情况。
 
 这些边界应在面试和 README 中如实说明。
 

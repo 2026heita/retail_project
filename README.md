@@ -10,7 +10,7 @@
 
 - **单日经营概览**：查看指定日期的销售额、订单数、客户数、销量、客单价五项 KPI
 - **多日趋势分析**：按日期范围查询经营趋势，支持前端时间序列图展示
-- **日环比分析**：对比当前日与前一日，计算五项指标的环比变化百分比
+- **日环比分析**：对比当前日与同一 source_system 下上一可用业务日，计算五项指标的环比变化百分比
 
 项目重点不是堆叠技术名词，而是展示一条可以解释、可以重跑、可以对账、可以验收的工程链路：
 
@@ -570,16 +570,16 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
 GET /api/v1/dashboard/overview/comparison?date=2026-04-08
 ```
 
-功能：对比当前日与前一日（`date.minusDays(1)`）的经营数据，计算五项指标的环比变化百分比。
+功能：对比当前日与同一 source_system 下上一可用业务日期的经营数据，计算五项指标的环比变化百分比。
 
 规则：
 
 - `date` 必填，格式为 `yyyy-MM-dd`；
 - 不能晚于当前日期；
 - 当前日无数据时返回 `404`；
-- 前一日无数据时返回 `200`，`comparisonAvailable=false`，`previous` 和 `changePercent` 为 `null`；
+- 上一可用业务日不存在时返回 `200`，`comparisonAvailable=false`，`comparisonDate`、`previous` 和 `changePercent` 为 `null`；
 - 环比公式：`(current - previous) / previous × 100`，使用 `BigDecimal` 计算，保留两位小数；
-- 前一日某项指标为 0 时，对应百分比返回 `null`，避免除以 0。
+- 上一可用业务日某项指标为 0 时，对应百分比返回 `null`，避免除以 0。
 
 业务接口使用统一 `ApiResponse`。`RequestIdFilter` 会读取或生成 `X-Request-Id`，写入响应头和 MDC；业务响应体同时返回 `requestId`，便于关联前后端日志。
 
@@ -650,7 +650,7 @@ MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 
 ### 10.3 BI 应用链路
 
-已验证：
+**历史工程验证（engineering_legacy_3x）**：
 
 ```text
 Hive ads_sales_overview_daily_hive
@@ -661,6 +661,31 @@ Hive ads_sales_overview_daily_hive
 ```
 
 趋势接口已返回 `2026-04-01` 至 `2026-04-08` 共 8 行数据，并保留 `sourceSystem=hive_ads`。
+
+**Canonical 真实数据验证**：
+
+Hive ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
+
+![Canonical ADS 全范围验证](docs/canonical_validation_screenshots/canonical_ads_sales_overview_full_validation.png)
+> 验证结果：row_count=604，distinct_dt=604，min_dt=2009-12-01，max_dt=2011-12-09，total_sales=17,743,429.16。
+
+Hive → MySQL 同步已完成全范围验证：
+
+![Canonical Hive-MySQL 同步验证](docs/canonical_validation_screenshots/canonical_hive_mysql_full_sync_validation.png)
+> 验证结果：source_rows=604，target_rows=604，日期范围 2009-12-01 ~ 2011-12-09，total_sales=17,743,429.16，逐行对账 PASS。
+> MySQL 中保留两组数据：旧历史展示数据（source_system=hive_ads，8 行，2026-04-01 ~ 2026-04-08）和 canonical 数据（source_system=retail_canonical_ads，604 行）。
+
+Spring Boot API 已真实连接 canonical serving 数据：
+
+![Canonical Spring API 趋势验证](docs/canonical_validation_screenshots/canonical_spring_api_trend_validation.png)
+> 趋势接口真实验证 2009-12-01 ~ 2009-12-03，返回数据与 Hive ADS / MySQL 完全一致，sourceSystem=retail_canonical_ads。
+
+Spring Boot 环比业务语义已修正并真实验证：
+
+![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
+> 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
+> 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
+> Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
 
 ---
 

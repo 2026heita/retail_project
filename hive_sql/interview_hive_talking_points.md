@@ -760,6 +760,11 @@ MySQL 调度流程：
 10. 单机 Hive 链路约 30 分钟，尚未进行高风险深度性能重构。
 11. 商品维度来源于交易明细，不是独立主数据系统。
 12. 项目没有内置 MySQL 到 Hive 的自动同步。
+13. Hive ADS 范围写入采用动态分区，一次范围式 ADS DML 覆盖 604 个真实业务日期；脚本仍保留独立的 DWD 前置检查和 ADS 后置验证查询。
+14. Hive → MySQL 同步采用范围式一次 Hive 查询 + 批量 MySQL UPSERT，不是逐日同步。
+15. 跨系统 DECIMAL 对账需要按数值类型比较，避免 Hive 输出 341.4 与 MySQL DECIMAL 输出 341.40 的字符串格式差异导致假失败。
+16. Spring Boot 环比接口当前使用"同一 source_system 下上一可用业务日"语义，不是固定"前一日（date.minusDays(1)）"，以应对真实业务日期存在缺口的情况。
+17. Star Schema 目前只连续验证至 2010-03-04（73 个真实业务日期），不是 604 天全量历史。
 
 ---
 
@@ -863,6 +868,47 @@ MySQL 调度流程：
 **R**
 
 > 优化后全链路质量门禁和金额对账继续通过，业务结果未改变。
+
+### 场景四：Hive/MySQL DECIMAL 格式差异导致对账假失败
+
+**S（背景）**
+
+> Hive → MySQL 同步后需要逐行对账验证数据一致性。
+
+**T（任务）**
+
+> 确保 604 个业务日期的 total_sales、total_orders 等指标完全一致。
+
+**A（行动）**
+
+> 发现 Hive 输出 DECIMAL 为 341.4，而 MySQL DECIMAL 输出为 341.40，字符串比较导致假失败。
+> 修改对账脚本：日期和整数严格比较，DECIMAL 按数值容差比较（CAST AS DECIMAL 后比较）。
+
+**R（结果）**
+
+> 604 行逐行对账全部 PASS，duplicate_dt_count=0，total_sales=17,743,429.16 完全一致。
+
+### 场景五：真实业务日期非连续导致环比失效
+
+**S（背景）**
+
+> Spring Boot 环比接口原实现使用 date.minusDays(1) 作为比较日期。
+
+**T（任务）**
+
+> 真实 canonical 数据验证发现业务日期存在缺口，例如 2009-12-13 的上一日 2009-12-12 无数据。
+
+**A（行动）**
+
+> 修改环比语义为"同一 source_system 下上一可用业务日"。
+> 新增 Mapper 方法 selectPreviousAvailable(date, sourceSystem)，SQL 使用 WHERE dt < #{date} ORDER BY dt DESC LIMIT 1。
+> 更新单元测试：新增日期缺口场景测试（2009-12-13 → 2009-12-11），防止退回 minusDays(1) 逻辑。
+
+**R（结果）**
+
+> 真实 API 验证：2009-12-13 → 2009-12-11，comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
+> 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
+> Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
 
 ---
 
