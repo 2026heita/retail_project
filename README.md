@@ -32,7 +32,7 @@
 | 方向 | 已完成内容 |
 |---|---|
 | 数仓分层 | ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS、星型模型 |
-| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则 |
+| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则（历史工程验证 12/12 PASS；当前 canonical 规则定义 STAR_001~STAR_017，共 17 条 BLOCK） |
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
 | 维度建模 | 每日完整快照式 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
@@ -59,11 +59,11 @@ DWD / fact_order       2,416,593 行
 
 | Profile | 规模 | 日期范围 | 用途 | 当前状态 |
 |---|---|---|---|---|
-| `canonical` | 1,067,371 行 | 2009—2011 | 业务口径定义、标准数据验证 | 原始数据已确认，完整链路和BI截图待重跑 |
+| `canonical` | 1,067,371 行 | 2009-12-01 ~ 2011-12-09（604 个真实业务日期） | 当前标准真实业务数据，DWD/DWS/ADS/serving/API/前端联调均已完成 | 全链路已验证 |
 | `engineering_legacy_3x` | 约 3,202,113 行 | 2026-04-08 | 历史工程回归基线，保留分区/重跑/门禁/星型模型验收证据 | 历史完整链路已验证 |
 | `synthetic_multiday` | 约 3,202,113 行/天 | 2026-04-01 至 2026-04-07 | 回刷、T+1、幂等性、趋势接口和前端链路验证 | 多日期链路已验证 |
 
-未来公开BI默认数据计划切换为 `canonical`。当前截图继续属于工程验证证据。
+公开 BI 默认数据已切换为 `canonical`。历史截图（engineering_legacy_3x）继续作为工程验证证据保留。
 
 - `canonical` 基于 UCI Online Retail II 公开数据集，原始日期为 2009—2011 年。
 - `engineering_legacy_3x` 是较早阶段通过复制扩展生成的工程验证数据，日期偏移至 2026-04-08，用于证明分区重跑、质量门禁、星型模型和 DolphinScheduler 链路曾经运行成功。它不代表真实企业经营数据。
@@ -77,28 +77,34 @@ DWD / fact_order       2,416,593 行
 
 ```mermaid
 flowchart LR
-    SRC["零售订单数据"] --> RAW["ODS Raw<br/>原始字段保真"]
+    SRC["零售订单数据<br/>1,067,371 行<br/>2009-12-01 ~ 2011-12-09"] --> RAW["ODS Raw<br/>原始字段保真"]
     RAW --> REJECT["ODS Reject<br/>日期异常隔离"]
     RAW --> ODS["正常 ODS<br/>业务日期分区"]
 
     REJECT --> G0["ODS 入仓完整性门禁"]
     ODS --> G0
-    G0 --> DWD["DWD 清洗明细"]
+    G0 --> DWD["DWD 清洗明细<br/>805,531 行<br/>604 个真实业务日期"]
     DWD --> G1["DWD 质量门禁"]
 
     G1 --> DWS["DWS 主题汇总"]
     DWS --> ADS["ADS 业务指标"]
     ADS --> G2["DWS / ADS 结果门禁"]
 
-    G2 --> STAR["星型模型<br/>SCD2 + 事实表"]
-    STAR --> G3["星型模型门禁"]
+    ADS --> BIADS["ads_sales_overview_daily_hive<br/>604 行"]
+    BIADS --> SYNC["Shell 同步与对账<br/>source_rows=604<br/>target_rows=604<br/>逐行对账 PASS"]
+    SYNC --> MYSQL["MySQL BI 应用表<br/>retail_bi.bi_sales_overview_daily<br/>612 行<br/>canonical 604 + legacy 8"]
+    MYSQL --> API["Spring Boot 指标 API<br/>trend/overview/comparison"]
+    API --> WEB["React 分析平台<br/>独立前端仓库"]
 
-    DWD --> BIADS["经营总览日 ADS"]
-    BIADS --> SYNC["Shell 同步与对账"]
-    SYNC --> MYSQL["MySQL BI 应用表"]
-    MYSQL --> API["Spring Boot 指标 API"]
-    API --> WEB["React 分析平台"]
+    G2 --> STAR["星型模型分支<br/>SCD2 + 事实表<br/>验证至 2010-03-04<br/>73 个真实业务日期"]
+    STAR --> G3["星型模型门禁<br/>17 条 BLOCK 规则"]
 ```
+
+> **Scope Note**：
+> - **Canonical DWD/DWS/ADS**：覆盖 604 个真实业务日期（2009-12-01 ~ 2011-12-09）
+> - **Canonical Star**：连续验证至 2010-03-04，覆盖 73 个真实业务日期（不是 604 天全量历史）
+> - **Serving 主线**：DWD → ads_sales_overview_daily_hive → Hive/MySQL 同步与对账 → retail_bi.bi_sales_overview_daily → Spring Boot API → React 分析平台
+> - **Star 分支**：另一条建模验证分支，不是 serving 必经路径
 
 ### 职责边界
 
@@ -307,7 +313,7 @@ ODS 入仓完整性
 |---|---:|---|
 | DWD | 6 | 无效数量、无效价格、空客户、分区非空、行数对账、时间格式 |
 | DWS / ADS | 11 | 金额对账、核心结果非空、占比汇总、贡献率范围 |
-| 星型模型 | 17 | SCD2 唯一性、事实表主键、行数与金额对账、维度关联 |
+| 星型模型 | 17（当前规则定义） | SCD2 唯一性、事实表主键、行数与金额对账、维度关联；历史工程验证时为 12 条（12/12 PASS），当前 canonical 规则定义为 STAR_001~STAR_017，共 17 条 BLOCK |
 
 处理方式：
 
@@ -648,7 +654,7 @@ MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 
 历史基线中的 DWD 行数和国家数与当前完整回归不同，因此两组数据只用于证明不同阶段的工程能力，不能直接横向比较业务结果。
 
-### 10.3 BI 应用链路
+### 10.4 BI 应用链路
 
 **历史工程验证（engineering_legacy_3x）**：
 
@@ -686,6 +692,11 @@ Spring Boot 环比业务语义已修正并真实验证：
 > 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
 > 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
 > Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
+
+前端 canonical 日环比验证：
+
+![Canonical 前端日环比验证](docs/result_screenshots/13_retail_bi_canonical_business_day_comparison.png)
+> 前端展示 2009-12-13 与上一可用业务日 2009-12-11 的经营指标比较，跳过无数据的 2009-12-12。对应 API 验证结果中 comparisonAvailable=true、sourceSystem=retail_canonical_ads。
 
 ---
 
@@ -840,7 +851,7 @@ Hive ADS → Shell 同步 → MySQL → Spring Boot API → React 前端展示
 
 ![单日经营概览与日环比](docs/result_screenshots/11_retail_bi_overview_comparison.png)
 
-> 展示总销售额、总订单数、总客户数、总销售数量和平均订单价值，并计算前一自然日环比。
+> 展示总销售额、总订单数、总客户数、总销售数量和平均订单价值，并计算同一 source_system 下上一可用业务日环比。
 
 #### 3. 多日销售趋势
 

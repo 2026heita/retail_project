@@ -26,15 +26,16 @@ DolphinScheduler 截图不代表 ODS Raw、ODS Reject、ODS 入仓完整性门�
 | `01_ds_workflow_instance_success.png` | DolphinScheduler 工作流实例执行成功，展示开始时间、结束时间和运行时长；敏感主机信息已裁剪。 |
 | `02_ds_dag_quality_gate_success.png` | 12 节点 DAG 全部成功，包含 `dwd_quality_gate`、两条 DWS 分支、四条 ADS 分支及最终汇聚节点。 |
 | `03_dwd_quality_gate_passed.png` | DWD 质量门禁执行结果，显示 `Data quality gate passed` 和 `failed_count=0`。 |
-| `04_ads_sales_contribution_20260408.png` | `dt=2026-04-08` 的高价值客户销售贡献查询结果。 |
-| `05_ads_customer_level_distribution_20260408.png` | `dt=2026-04-08` 的客户价值层级分布查询结果。 |
-| `06_ads_country_sales_rank_20260408.png` | `dt=2026-04-08` 的国家销售排行查询结果。 |
-| `07_ads_customer_preference_20260408.png` | `dt=2026-04-08` 的高价值客户商品偏好查询结果。 |
-| `08_light_bi_dashboard_top_20260408.png` | 轻量 BI Dashboard 上半部分：高价值客户指标和客户层级分布。 |
-| `09_light_bi_dashboard_bottom_20260408.png` | 轻量 BI Dashboard 下半部分：国家销售额 Top10 和偏好商品 Top10。 |
+| `04_ads_sales_contribution_20260408.png` | engineering_legacy_3x 历史工程验证：`dt=2026-04-08` 的高价值客户销售贡献查询结果。 |
+| `05_ads_customer_level_distribution_20260408.png` | engineering_legacy_3x 历史工程验证：`dt=2026-04-08` 的客户价值层级分布查询结果。 |
+| `06_ads_country_sales_rank_20260408.png` | engineering_legacy_3x 历史工程验证：`dt=2026-04-08` 的国家销售排行查询结果。 |
+| `07_ads_customer_preference_20260408.png` | engineering_legacy_3x 历史工程验证：`dt=2026-04-08` 的高价值客户商品偏好查询结果。 |
+| `08_light_bi_dashboard_top_20260408.png` | engineering_legacy_3x 历史工程验证：轻量 BI Dashboard 上半部分，高价值客户指标和客户层级分布。 |
+| `09_light_bi_dashboard_bottom_20260408.png` | engineering_legacy_3x 历史工程验证：轻量 BI Dashboard 下半部分，国家销售额 Top10 和偏好商品 Top10。 |
 | `10_retail_bi_connector_success.png` | 前端零售 BI 连接器接入成功：外部数据源折叠面板展开，API 地址和日期范围配置完成。 |
-| `11_retail_bi_overview_comparison.png` | 前端单日经营概览与日环比分析：五个核心 KPI 卡片及日环比变化百分比。 |
-| `12_retail_bi_sales_trend.png` | 前端多日趋势分析：时间趋势折线图展示销售额、订单数等指标在日期范围内的变化。 |
+| `11_retail_bi_overview_comparison.png` | 前端单日经营概览与日环比分析：五个核心 KPI 卡片及日环比变化百分比（基于 `engineering_legacy_3x` 历史工程回归数据）。 |
+| `12_retail_bi_sales_trend.png` | 前端多日趋势分析：时间趋势折线图展示销售额、订单数等指标在日期范围内的变化（基于 `synthetic_multiday` 多日期工程验证数据）。 |
+| `13_retail_bi_canonical_business_day_comparison.png` | 前端 canonical 真实数据日环比验证：截图直接证明 2009-12-13 与上一可用业务日 2009-12-11 的前端比较，跳过无数据的 2009-12-12。对应 API 验证结果中 comparisonAvailable=true、sourceSystem=retail_canonical_ads。 |
 
 ---
 
@@ -101,7 +102,7 @@ docs/27_metric_definitions.txt
 docs/multiday_validation_screenshots/
 ```
 
-该目录属于较早的数据和清洗规则基线，与当前 `2026-04-08` 完整回归结果需要分开解释。
+该目录属于较早的数据和清洗规则基线，与 engineering_legacy_3x 的 `2026-04-08` 历史完整回归结果需要分开解释。
 
 ---
 
