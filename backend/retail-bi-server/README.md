@@ -172,8 +172,9 @@ GET /api/v1/dashboard/overview/comparison?date=2026-04-08
 - 不能晚于当前日期
 
 **口径说明：**
-- 比较日期为同一 source_system 下上一可用业务日
+- 比较日期为同一 source_system 下上一可用业务日（不是固定"前一日"或 date.minusDays(1)）
 - 自动选择数据库中最近有数据的日期（处理业务日期缺口场景）
+- 真实案例：2009-12-13 的上一自然日 2009-12-12 无数据，因此上一可用业务日为 2009-12-11
 
 **环比公式：**
 ```
@@ -241,7 +242,7 @@ changePercent = (current - previous) / previous × 100
   "message": "success",
   "data": {
     "date": "2026-04-08",
-    "comparisonDate": "2026-04-07",
+    "comparisonDate": null,
     "comparisonAvailable": false,
     "current": {
       "dt": "2026-04-08",
