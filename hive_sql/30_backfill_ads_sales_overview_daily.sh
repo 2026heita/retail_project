@@ -87,9 +87,9 @@ DWD_CHECK_OUTPUT="$(
     hive --database "${HIVE_DATABASE}" -S -e "
 SELECT
     COUNT(DISTINCT dt) AS dwd_distinct_dt,
-    MIN(dt) AS dwd_min_dt,
-    MAX(dt) AS dwd_max_dt,
-    SUM(amount) AS dwd_sum_amount
+    COALESCE(MIN(dt), '__EMPTY__') AS dwd_min_dt,
+    COALESCE(MAX(dt), '__EMPTY__') AS dwd_max_dt,
+    COALESCE(SUM(amount), 0) AS dwd_sum_amount
 FROM dwd_retail_clean_hive
 WHERE dt BETWEEN '${START_DT}' AND '${END_DT}';
 "
@@ -120,19 +120,21 @@ if [[ ! "${DWD_DISTINCT_DT}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-if [[ "${DWD_DISTINCT_DT}" -le 0 ]]; then
-    echo "错误：DWD 在范围 ${START_DT} 至 ${END_DT} 内无业务日期。"
-    exit 1
-fi
+if [[ "${DWD_DISTINCT_DT}" -eq 0 ]]; then
+    if [[ "${DWD_MIN_DT}" != "__EMPTY__" || "${DWD_MAX_DT}" != "__EMPTY__" ]]; then
+        echo "错误：DWD 无业务日期时 min_dt/max_dt 应为 __EMPTY__。"
+        exit 1
+    fi
+else
+    if [[ ! "${DWD_MIN_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "错误：dwd_min_dt 不是合法日期格式：${DWD_MIN_DT}"
+        exit 1
+    fi
 
-if [[ ! "${DWD_MIN_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "错误：dwd_min_dt 不是合法日期格式：${DWD_MIN_DT}"
-    exit 1
-fi
-
-if [[ ! "${DWD_MAX_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "错误：dwd_max_dt 不是合法日期格式：${DWD_MAX_DT}"
-    exit 1
+    if [[ ! "${DWD_MAX_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "错误：dwd_max_dt 不是合法日期格式：${DWD_MAX_DT}"
+        exit 1
+    fi
 fi
 
 # dwd_sum_amount 必须是合法十进制数字（允许负数、小数）
@@ -146,6 +148,70 @@ echo "  distinct_dt=${DWD_DISTINCT_DT}"
 echo "  min_dt=${DWD_MIN_DT}"
 echo "  max_dt=${DWD_MAX_DT}"
 echo "  sum_amount=${DWD_SUM_AMOUNT}"
+
+ADS_TABLE_EXISTS="$(
+    hive --database "${HIVE_DATABASE}" -S -e "
+SHOW TABLES 'ads_sales_overview_daily_hive';
+"
+)" || {
+    echo "错误：检查 ADS 表是否存在失败。"
+    exit 1
+}
+
+ADS_OLD_PARTITIONS=""
+
+if [[ -n "${ADS_TABLE_EXISTS}" ]]; then
+    ADS_OLD_PARTITIONS="$(
+        hive --database "${HIVE_DATABASE}" -S -e "
+SHOW PARTITIONS ads_sales_overview_daily_hive;
+" | awk -F= -v start="${START_DT}" -v end="${END_DT}" '
+$1 == "dt" {
+    dt = $2
+    if (dt >= start && dt <= end) {
+        print dt
+    }
+}'
+    )" || {
+        echo "错误：查询 ADS 旧分区失败。"
+        exit 1
+    }
+fi
+
+DROP_PARTITION_CLAUSES=""
+
+while IFS= read -r dt; do
+    [[ -z "${dt}" ]] && continue
+
+    if [[ ! "${dt}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "错误：ADS 分区值格式非法：${dt}"
+        exit 1
+    fi
+
+    if [[ "${dt}" < "${START_DT}" || "${dt}" > "${END_DT}" ]]; then
+    echo "错误：ADS 分区 ${dt} 超出回刷范围 ${START_DT} 至 ${END_DT}。"
+    exit 1
+    fi
+
+    DROP_PARTITION_CLAUSES+=", PARTITION (dt='${dt}')"
+done <<< "${ADS_OLD_PARTITIONS}"
+
+DROP_PARTITION_CLAUSES="${DROP_PARTITION_CLAUSES#, }"
+
+if [[ -n "${DROP_PARTITION_CLAUSES}" ]]; then
+    echo
+    echo "清理回刷范围内的 ADS 旧分区..."
+
+    hive --database "${HIVE_DATABASE}" -S -e "
+ALTER TABLE ads_sales_overview_daily_hive
+DROP IF EXISTS ${DROP_PARTITION_CLAUSES};
+" || {
+        echo "错误：删除 ADS 旧分区失败。"
+        exit 1
+    }
+else
+    echo
+    echo "回刷范围内没有 ADS 旧分区，无需清理。"
+fi
 
 # ------------------------------------------------------------
 # 2. 执行 ADS SQL（整个范围一次 Hive CLI）
@@ -180,9 +246,9 @@ ADS_VERIFY_OUTPUT="$(
 SELECT
     COUNT(*) AS ads_row_count,
     COUNT(DISTINCT dt) AS ads_distinct_dt,
-    MIN(dt) AS ads_min_dt,
-    MAX(dt) AS ads_max_dt,
-    SUM(total_sales) AS ads_sum_total_sales
+    COALESCE(MIN(dt), '__EMPTY__') AS ads_min_dt,
+    COALESCE(MAX(dt), '__EMPTY__') AS ads_max_dt,
+    COALESCE(SUM(total_sales), 0) AS ads_sum_total_sales
 FROM ads_sales_overview_daily_hive
 WHERE dt BETWEEN '${START_DT}' AND '${END_DT}';
 "
@@ -218,14 +284,21 @@ if [[ ! "${ADS_DISTINCT_DT}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-if [[ ! "${ADS_MIN_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "错误：ads_min_dt 不是合法日期格式：${ADS_MIN_DT}"
-    exit 1
-fi
+if [[ "${ADS_DISTINCT_DT}" -eq 0 ]]; then
+    if [[ "${ADS_MIN_DT}" != "__EMPTY__" || "${ADS_MAX_DT}" != "__EMPTY__" ]]; then
+        echo "错误：ADS 无业务日期时 min_dt/max_dt 应为 __EMPTY__。"
+        exit 1
+    fi
+else
+    if [[ ! "${ADS_MIN_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "错误：ads_min_dt 不是合法日期格式：${ADS_MIN_DT}"
+        exit 1
+    fi
 
-if [[ ! "${ADS_MAX_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "错误：ads_max_dt 不是合法日期格式：${ADS_MAX_DT}"
-    exit 1
+    if [[ ! "${ADS_MAX_DT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "错误：ads_max_dt 不是合法日期格式：${ADS_MAX_DT}"
+        exit 1
+    fi
 fi
 
 # ads_sum_total_sales 必须是合法十进制数字（允许负数、小数）
