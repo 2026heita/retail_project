@@ -42,7 +42,8 @@ src/main/java/com/retail/bi/
 │   └── WebCorsConfig.java            # CORS 配置
 ├── controller/
 │   ├── HealthController.java         # 健康检查
-│   └── SalesOverviewController.java  # 销售概览接口
+│   ├── SalesOverviewController.java  # 销售概览接口
+│   └── SalesAnomalyController.java   # 经营异常查询接口
 ├── dto/
 │   ├── DashboardQueryDTO.java        # 单日查询参数
 │   └── SalesTrendQueryDTO.java       # 趋势查询参数
@@ -52,14 +53,18 @@ src/main/java/com/retail/bi/
 ├── filter/
 │   └── RequestIdFilter.java          # 请求 ID 过滤器
 ├── mapper/
-│   └── SalesOverviewMapper.java      # MyBatis Mapper
+│   ├── SalesOverviewMapper.java      # MyBatis Mapper
+│   └── SalesAnomalyMapper.java       # 经营异常 Mapper
 ├── service/
 │   ├── SalesOverviewMetricService.java
-│   └── SalesOverviewMetricServiceImpl.java
+│   ├── SalesOverviewMetricServiceImpl.java
+│   ├── SalesAnomalyService.java
+│   └── SalesAnomalyServiceImpl.java
 └── vo/
     ├── SalesOverviewVO.java          # 返回对象
     ├── SalesOverviewComparisonVO.java        # 日环比对比结果
-    └── SalesOverviewChangePercentVO.java     # 环比变化百分比
+    ├── SalesOverviewChangePercentVO.java     # 环比变化百分比
+    └── SalesAnomalyVO.java           # 经营异常返回对象
 ```
 
 ## API 接口
@@ -82,7 +87,54 @@ GET /api/v1/health
 }
 ```
 
-### 2. 单日销售概览
+### 2. 经营异常查询
+
+```
+GET /api/v1/dashboard/anomalies?startDate=2010-09-01&endDate=2010-09-30
+```
+
+**参数：**
+- `startDate`（必填）：开始日期，ISO 格式（yyyy-MM-dd）
+- `endDate`（必填）：结束日期，ISO 格式（yyyy-MM-dd）
+- 日期范围不能超过 31 天
+
+**响应示例：**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "dt": "2010-09-28",
+      "totalSales": 40204.85,
+      "totalOrders": 109,
+      "totalCustomers": 91,
+      "totalQuantity": 22283,
+      "avgOrderValue": 368.85,
+      "prevDt": "2010-09-27",
+      "prevSales": 115243.44,
+      "salesChangePct": -65.11,
+      "salesLossAmount": 75038.59,
+      "ordersChangePct": 21.11,
+      "customersChangePct": 31.88,
+      "quantityChangePct": -82.14,
+      "aovChangePct": -71.19,
+      "anomalyLevel": "HIGH",
+      "primaryDriver": "AVG_ORDER_VALUE",
+      "sourceSystem": "retail_canonical_anomaly_ads"
+    }
+  ],
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**规则：**
+- 只返回 MEDIUM / HIGH 等级异常
+- 无异常时返回 HTTP 200 + `[]`，不是 404
+- Spring Boot 层不重新计算 Hive 已确定的异常规则
+
+### 3. 单日销售概览
 
 ```
 GET /api/v1/dashboard/overview?date=2026-04-08

@@ -36,6 +36,8 @@ DolphinScheduler 截图不代表 ODS Raw、ODS Reject、ODS 入仓完整性门�
 | `11_retail_bi_overview_comparison.png` | 前端单日经营概览与日环比分析：五个核心 KPI 卡片及日环比变化百分比（基于 `engineering_legacy_3x` 历史工程回归数据）。 |
 | `12_retail_bi_sales_trend.png` | 前端多日趋势分析：时间趋势折线图展示销售额、订单数等指标在日期范围内的变化（基于 `synthetic_multiday` 多日期工程验证数据）。 |
 | `13_retail_bi_canonical_business_day_comparison.png` | 前端 canonical 真实数据日环比验证：截图直接证明 2009-12-13 与上一可用业务日 2009-12-11 的前端比较，跳过无数据的 2009-12-12。对应 API 验证结果中 comparisonAvailable=true、sourceSystem=retail_canonical_ads。 |
+| `anomaly_case_high_2010-09-28.png` | Hive 经营异常检测结果：2010-09-28 为 HIGH 等级异常，sales_change_pct=-65.11%，primary_driver=AVG_ORDER_VALUE。 |
+| `anomaly_api_high_2010-09-28.png` | Spring Boot 异常 API 真实验证：查询 2010-09-28 返回 HIGH 等级异常，sourceSystem=retail_canonical_anomaly_ads。 |
 
 ---
 

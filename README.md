@@ -6,11 +6,12 @@
 
 本项目以零售订单数据为基础，完成了从数据清洗、离线数仓分层、质量门禁、调度编排，到 ADS 指标同步、Java 查询 API 和前端 BI 分析的完整闭环。
 
-当前已实现三项核心分析能力：
+当前已实现四项核心分析能力：
 
 - **单日经营概览**：查看指定日期的销售额、订单数、客户数、销量、客单价五项 KPI
 - **多日趋势分析**：按日期范围查询经营趋势，支持前端时间序列图展示
 - **日环比分析**：对比当前日与同一 source_system 下上一可用业务日，计算五项指标的环比变化百分比
+- **经营异常分析**：基于规则检测日度经营异常，识别 HIGH / MEDIUM 等级异常并分析主要驱动指标
 
 项目重点不是堆叠技术名词，而是展示一条可以解释、可以重跑、可以对账、可以验收的工程链路：
 
@@ -36,8 +37,8 @@
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
 | 维度建模 | 每日完整快照式 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
-| BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标 |
-| Java 服务 | 单日概览、日期范围趋势、日环比分析、Bean Validation、统一响应、全局异常、requestId |
+| BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标；经营异常日汇总（ads_sales_anomaly_daily_hive，604 个真实业务日期） |
+| Java 服务 | 单日概览、日期范围趋势、日环比分析、经营异常查询（/api/v1/dashboard/anomalies）、Bean Validation、统一响应、全局异常、requestId |
 | 前端闭环 | 零售 BI Connector、KPI 经营概览、日环比变化分析、后端 API 联通、时间趋势图、CSV 导出 |
 
 `engineering_legacy_3x` 历史工程回归日期 `2026-04-08` 的核心结果：
@@ -96,6 +97,11 @@ flowchart LR
     MYSQL --> API["Spring Boot 指标 API<br/>trend/overview/comparison"]
     API --> WEB["React 分析平台<br/>独立前端仓库"]
 
+    ADS --> ANOMALY_ADS["ads_sales_anomaly_daily_hive<br/>604 行<br/>经营异常检测"]
+    ANOMALY_ADS --> ANOMALY_SYNC["Shell 同步<br/>source_rows=604<br/>target_rows=604"]
+    ANOMALY_SYNC --> ANOMALY_MYSQL["MySQL 异常表<br/>retail_bi.bi_sales_anomaly_daily<br/>604 行<br/>source_system=retail_canonical_anomaly_ads"]
+    ANOMALY_MYSQL --> ANOMALY_API["Spring Boot 异常 API<br/>/api/v1/dashboard/anomalies"]
+
     G2 --> STAR["星型模型分支<br/>SCD2 + 事实表<br/>验证至 2010-03-04<br/>73 个真实业务日期"]
     STAR --> G3["星型模型门禁<br/>17 条 BLOCK 规则"]
 ```
@@ -104,6 +110,7 @@ flowchart LR
 > - **Canonical DWD/DWS/ADS**：覆盖 604 个真实业务日期（2009-12-01 ~ 2011-12-09）
 > - **Canonical Star**：连续验证至 2010-03-04，覆盖 73 个真实业务日期（不是 604 天全量历史）
 > - **Serving 主线**：DWD → ads_sales_overview_daily_hive → Hive/MySQL 同步与对账 → retail_bi.bi_sales_overview_daily → Spring Boot API → React 分析平台
+> - **经营异常主线**：DWD → ads_sales_anomaly_daily_hive → Hive/MySQL 同步 → retail_bi.bi_sales_anomaly_daily → Spring Boot 异常 API
 > - **Star 分支**：另一条建模验证分支，不是 serving 必经路径
 
 ### 职责边界
@@ -602,6 +609,107 @@ http://127.0.0.1:*
 
 ---
 
+## 9. 经营异常检测
+
+### 9.1 Hive ADS 经营异常表
+
+**表名**：`ads_sales_anomaly_daily_hive`
+
+**数据库**：`retail_canonical`
+
+**粒度**：每个真实业务日期一行。
+
+**核心字段**：
+
+| 字段 | 含义 |
+|---|---|
+| dt | 业务日期 |
+| total_sales | 当日销售额 |
+| total_orders | 当日订单数 |
+| total_customers | 当日客户数 |
+| total_quantity | 当日销量 |
+| avg_order_value | 客单价 |
+| prev_dt | 上一可用业务日 |
+| prev_sales | 上一可用业务日销售额 |
+| sales_change_pct | 销售额变化百分比 |
+| sales_loss_amount | 销售损失金额 |
+| orders_change_pct | 订单数变化百分比 |
+| customers_change_pct | 客户数变化百分比 |
+| quantity_change_pct | 销量变化百分比 |
+| aov_change_pct | 客单价变化百分比 |
+| anomaly_level | 异常等级 |
+| primary_driver | 主要驱动指标 |
+
+**异常等级（V1 已冻结）**：
+
+| 等级 | 规则 |
+|---|---|
+| NOT_EVALUATED | 不存在上一可用业务日 |
+| HIGH | sales_change_pct <= -50 AND sales_loss_amount >= 30000 AND (orders/customers/quantity/aov 至少一个变化 <= -40) |
+| MEDIUM | sales_change_pct <= -40 AND sales_loss_amount >= 20000 |
+| NORMAL | 其余情况 |
+
+**分布结果（canonical，604 个真实业务日期，2009-12-01 ~ 2011-12-09）**：
+
+| anomaly_level | count |
+|---|---|
+| HIGH | 21 |
+| MEDIUM | 24 |
+| NORMAL | 558 |
+| NOT_EVALUATED | 1 |
+
+**比较口径说明**：这里比较的是"上一可用业务日"，不是自然日 yesterday。例如 2009-12-13 的上一可用业务日为 2009-12-11，因为 2009-12-12 没有业务数据。
+
+### 9.2 异常指标解释
+
+**销售额核心拆解**：
+
+```
+sales = orders × avg_order_value
+```
+
+因此：
+- **直接驱动指标**：ORDERS、AVG_ORDER_VALUE
+- **辅助经营信号**：CUSTOMERS、QUANTITY
+
+`primary_driver` 最终只在 ORDERS 和 AVG_ORDER_VALUE 之间选择。不要把 CUSTOMERS / QUANTITY 写成销售额恒等式中的直接驱动。
+
+**边界说明**：经营异常检测和指标分解不等于因果推断。当前实现是规则式经营异常检测 + 指标分解，不是根因分析系统、不是 AI 异常检测、不是机器学习模型。
+
+### 9.3 Hive → MySQL Serving
+
+**MySQL Serving 表**：`retail_bi.bi_sales_anomaly_daily`
+
+**数据来源**：`retail_canonical.ads_sales_anomaly_daily_hive`
+
+**source_system**：`retail_canonical_anomaly_ads`
+
+**批量同步脚本**：`sync/04_backfill_sales_anomaly_to_mysql_v2.sh`
+
+**实现方式**：Hive 输出原始 16 列 TSV → Python `csv.reader(delimiter="\t")` 解析 → 生成 MySQL UPSERT → 写入目标表。
+
+**单日同步脚本**：`sync/03_sync_sales_anomaly_to_mysql.sh`（已完成真实验证）
+
+604 个业务日期已完成批量同步。
+
+### 9.4 Spring Boot 异常 API
+
+**接口**：
+
+```http
+GET /api/v1/dashboard/anomalies?startDate=yyyy-MM-dd&endDate=yyyy-MM-dd
+```
+
+**规则**：
+- 直接查询 `bi_sales_anomaly_daily`
+- 只返回 MEDIUM / HIGH 等级异常
+- 无异常时返回 HTTP 200 + `[]`，不是 404
+- Spring Boot 层不重新计算 Hive 已确定的异常规则
+
+**CORS**：已允许 `https://datainsightkit.com` 和 `https://2026heita.github.io`
+
+---
+
 ## 10. 已验证结果
 
 ### 10.1 `engineering_legacy_3x` 历史工程回归日期：`2026-04-08`
@@ -697,6 +805,47 @@ Spring Boot 环比业务语义已修正并真实验证：
 
 ![Canonical 前端日环比验证](docs/result_screenshots/13_retail_bi_canonical_business_day_comparison.png)
 > 前端展示 2009-12-13 与上一可用业务日 2009-12-11 的经营指标比较，跳过无数据的 2009-12-12。对应 API 验证结果中 comparisonAvailable=true、sourceSystem=retail_canonical_ads。
+
+### 10.5 经营异常检测链路验证
+
+Hive 经营异常 ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
+
+```text
+anomaly_level 分布：
+- HIGH: 21
+- MEDIUM: 24
+- NORMAL: 558
+- NOT_EVALUATED: 1
+```
+
+真实验证案例（2010-09-28）：
+
+```text
+dt: 2010-09-28
+prev_dt: 2010-09-27
+total_sales: 40,204.85
+prev_sales: 115,243.44
+sales_change_pct: -65.11
+sales_loss_amount: 75,038.59
+orders_change_pct: +21.11
+customers_change_pct: +31.88
+quantity_change_pct: -82.14
+aov_change_pct: -71.19
+anomaly_level: HIGH
+primary_driver: AVG_ORDER_VALUE
+```
+
+业务解释：与上一可用业务日相比，销售额下降 65.11%，对应销售损失 75,038.59。订单数上涨 21.11%，平均客单价下降 71.19%，因此 AVG_ORDER_VALUE 是主要直接驱动指标。客户数上涨 31.88%，销售数量下降 82.14%，作为辅助经营信号。
+
+Hive 异常检测结果：
+
+![Hive 经营异常案例](docs/evidence/anomaly_case_high_2010-09-28.png)
+> 证明：2010-09-28 为 HIGH 等级异常，sales_change_pct=-65.11%，primary_driver=AVG_ORDER_VALUE。
+
+Spring Boot 异常 API 真实验证：
+
+![Spring Boot 异常 API 验证](docs/evidence/anomaly_api_high_2010-09-28.png)
+> 证明：查询 2010-09-28 返回 HIGH 等级异常，sourceSystem=retail_canonical_anomaly_ads，数据与 Hive 一致。
 
 ---
 

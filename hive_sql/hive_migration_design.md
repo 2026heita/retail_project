@@ -390,6 +390,7 @@ ads_high_value_customer_sales_contribution_hive
 ads_customer_level_distribution_hive
 ads_country_sales_rank_hive
 ads_high_value_customer_preference_hive
+ads_sales_anomaly_daily_hive
 ```
 
 分别用于：
@@ -397,7 +398,8 @@ ads_high_value_customer_preference_hive
 - 高价值客户数量、订单和销售贡献；
 - 客户层级数量及销售额分布；
 - 国家销售排名；
-- 高价值客户偏好商品排名。
+- 高价值客户偏好商品排名；
+- **经营异常检测**：基于规则识别日度经营异常（HIGH/MEDIUM 等级），分析主要驱动指标（ORDERS 或 AVG_ORDER_VALUE），覆盖 604 个真实业务日期（2009-12-01 ~ 2011-12-09）。
 
 高价值客户贡献表对无匹配结果增加 `COALESCE(...,0)`，避免 `SUM()` 返回 `NULL`，保证后续 BI 导出和质量检查得到明确数值。
 

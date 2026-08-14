@@ -70,8 +70,6 @@
 
 当前 canonical 真实业务数据（1,067,371 行 Raw，DWD 805,531 行，604 个真实业务日期，2009-12-01 ~ 2011-12-09）已完成 DWD/DWS/ADS/serving/API/前端联调全链路验证。
 
-
-
 项目当前包含四个阶段：
 
 
@@ -96,7 +94,9 @@
 
 4\. \*\*BI 应用闭环阶段\*\*  
 
-&#x20;  从 Hive ADS 预计算经营总览日指标，通过 Shell 幂等同步到 MySQL 应用表，再由 Spring Boot 提供单日概览和日期范围趋势接口，最后接入独立 React 分析平台，形成“数仓 → Java → BI”闭环。
+&#x20;  从 Hive ADS 预计算经营总览日指标，通过 Shell 幂等同步到 MySQL 应用表，再由 Spring Boot 提供单日概览和日期范围趋势接口，最后接入独立 React 分析平台，形成"数仓 → Java → BI"闭环。
+
+&#x20;  新增经营异常检测 ADS（ads\_sales\_anomaly\_daily\_hive），基于规则识别 HIGH / MEDIUM 等级经营异常，通过 Shell 批量同步至 MySQL Serving 表（bi\_sales\_anomaly\_daily），Spring Boot 提供异常查询接口（/api/v1/dashboard/anomalies），形成完整的异常检测链路。
 
 
 

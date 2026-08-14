@@ -118,11 +118,12 @@ ads_high_value_customer_sales_contribution_hive
 ads_customer_level_distribution_hive
 ads_country_sales_rank_hive
 ads_high_value_customer_preference_hive
+ads_sales_anomaly_daily_hive
 ```
 
 回答：
 
-> ADS 面向最终分析或展示场景，每张表对应一个清晰主题，不再承担复杂明细清洗。
+> ADS 面向最终分析或展示场景，每张表对应一个清晰主题，不再承担复杂明细清洗。新增的经营异常 ADS 基于规则检测日度经营异常，识别 HIGH / MEDIUM 等级异常并分析主要驱动指标（ORDERS 或 AVG_ORDER_VALUE）。
 
 ---
 
