@@ -15,8 +15,8 @@
 Hive 源表 retail
   ↓
 ODS Raw
-  ├── 日期异常 → ODS Reject
-  └── 日期正常 → 正常 ODS
+  ├── 技术解析异常 → ODS Reject
+  └── 可正常解析且属于目标业务日 → 正常 ODS
                     ↓
                    DWD
                     ↓
@@ -157,7 +157,7 @@ data/sample/retail_sample.csv
 - 空商品编码；
 - 空商品描述。
 
-当前样例没有日期为空或日期解析失败记录，因此预期 Reject 数量为 0。
+当前样例没有日期、Quantity 或 Price 的技术解析异常，因此预期 Reject 数量为 0；样例中的 Quantity=0 和 Price=0 属于可解析的业务无效值，会在 DWD 阶段过滤，不属于 ODS Reject。
 
 ### 5.1 使用限制
 
@@ -320,19 +320,25 @@ retail → ods_retail_raw_hive
 ods_retail_raw_hive → ods_retail_reject_hive
 ```
 
-当前只接收：
+当前接收 6 类技术解析异常（按优先级排序）：
 
-- `InvoiceDate` 为空；
-- `InvoiceDate` 不符合当前支持的日期格式。
+1. `EMPTY_INVOICE_DATE`：InvoiceDate 为空
+2. `DATE_PARSE_FAILED`：InvoiceDate 无法按支持的 4 种格式解析
+3. `EMPTY_QUANTITY`：quantity 为空
+4. `QUANTITY_PARSE_FAILED`：quantity 无法转换为 BIGINT
+5. `EMPTY_PRICE`：price 为空
+6. `PRICE_PARSE_FAILED`：price 无法转换为 DECIMAL(10,2)
 
-支持格式：
+支持日期格式：
 
 ```text
 yyyy-MM-dd HH:mm:ss
+yyyy-MM-dd HH:mm
 d/M/yyyy HH:mm:ss
+d/M/yyyy HH:mm
 ```
 
-数量、价格、客户和取消订单异常当前不进入 Reject，而是在正常 ODS 内容检查和 DWD 清洗阶段处理。
+> **工程边界说明**：当前样例数据没有触发 Reject 的记录，因此预期 Reject 数量为 0。新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑。
 
 ### 9.3 正常 ODS
 

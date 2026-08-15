@@ -35,7 +35,7 @@
 | 数仓分层 | ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS、星型模型 |
 | 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则（历史工程验证 12/12 PASS；当前 canonical 规则定义 STAR_001~STAR_017，共 17 条 BLOCK） |
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
-| 维度建模 | 按业务日物化完整历史快照的 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
+| 维度建模 | 按业务日物化完整历史快照的 SCD2 用户维度（属性未变化时沿用 current 版本，属性变化时关闭旧版本并生成新版本）、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
 | BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标；经营异常日汇总（ads_sales_anomaly_daily_hive，604 个真实业务日期） |
 | Java 服务 | 单日概览、日期范围趋势、日环比分析、经营异常查询（/api/v1/dashboard/anomalies）、Bean Validation、统一响应、全局异常、requestId |
@@ -80,7 +80,7 @@ DWD / fact_order       2,416,593 行
 ```mermaid
 flowchart LR
     SRC["零售订单数据<br/>1,067,371 行<br/>2009-12-01 ~ 2011-12-09"] --> RAW["ODS Raw<br/>原始字段保真"]
-    RAW --> REJECT["ODS Reject<br/>日期异常隔离"]
+    RAW --> REJECT["ODS Reject<br/>技术解析异常隔离"]
     RAW --> ODS["正常 ODS<br/>业务日期分区"]
 
     REJECT --> G0["ODS 入仓完整性门禁"]
@@ -195,7 +195,7 @@ retail_project/
 
 | 文件 | 作用 |
 |---|---|
-| `hive_sql/run_all_hive.sh` | 执行 14 步 ODS → DWD → DWS → ADS 基础主链路 |
+| `hive_sql/run_all_hive.sh` | 执行 20 步完整主链路（ODS Raw/Reject/正常 ODS → ODS 入仓门禁 → DWD → DWD 门禁 → DWS/ADS → 结果门禁 → Star Schema → Star 门禁 → 结果展示） |
 | `hive_sql/run_daily_hive_profiled.sh` | 日常执行、耗时记录与阶段续跑 |
 | `hive_sql/run_backfill_hive.sh` | 按日期升序回刷 |
 | `hive_sql/run_idempotency_check_hive.sh` | 行数与双 CRC32 内容指纹检查 |
@@ -224,7 +224,7 @@ ods_retail_raw_hive
 
 例如，若 `Quantity='abc'` 在入仓时直接转为整数，只会得到 `NULL`，后续无法区分“原值为空”和“格式错误”。因此类型转换和业务清洗放在下游处理。
 
-### 5.2 ODS Reject：日期异常隔离
+### 5.2 ODS Reject：技术解析异常隔离
 
 表：
 
@@ -232,21 +232,27 @@ ods_retail_raw_hive
 ods_retail_reject_hive
 ```
 
-当前分流规则：
+当前分流规则（6 类技术 Reject，按优先级排序）：
 
-- `InvoiceDate` 为空；
-- `InvoiceDate` 无法按支持格式解析。
+1. `EMPTY_INVOICE_DATE`：InvoiceDate 为空
+2. `DATE_PARSE_FAILED`：InvoiceDate 无法按支持的 4 种格式解析
+3. `EMPTY_QUANTITY`：quantity 为空
+4. `QUANTITY_PARSE_FAILED`：quantity 无法转换为 BIGINT
+5. `EMPTY_PRICE`：price 为空
+6. `PRICE_PARSE_FAILED`：price 无法转换为 DECIMAL(10,2)
 
-支持格式：
+支持日期格式：
 
 ```text
-yyyy-MM-dd H:mm:ss
-yyyy-MM-dd H:mm
-d/M/yyyy H:mm:ss
-d/M/yyyy H:mm
+yyyy-MM-dd HH:mm:ss
+yyyy-MM-dd HH:mm
+d/M/yyyy HH:mm:ss
+d/M/yyyy HH:mm
 ```
 
 Reject 表保留原始字段、解析结果、异常编码、异常原因和处理批次，便于追踪问题数据。
+
+> **工程边界说明**：当前 canonical 基线 reject=0，新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑。
 
 ### 5.3 正常 ODS 与 DWD
 
@@ -381,7 +387,7 @@ bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 mart
 bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 star
 ```
 
-`run_all_hive.sh` 保留为 14 步 ODS → DWD → DWS → ADS 基础主链路，不包含 Star Schema 分支。
+`run_all_hive.sh` 是 20 步完整主链路，包含建表、门禁、Star Schema 和最终结果展示，是首次复现的完整入口。
 
 脚本使用：
 
