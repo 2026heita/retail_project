@@ -35,10 +35,11 @@
 | 数仓分层 | ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS、星型模型 |
 | 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则（历史工程验证 12/12 PASS；当前 canonical 规则定义 STAR_001~STAR_017，共 17 条 BLOCK） |
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
-| 维度建模 | 每日完整快照式 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
+| 维度建模 | 按业务日物化完整历史快照的 SCD2 用户维度、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
 | BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标；经营异常日汇总（ads_sales_anomaly_daily_hive，604 个真实业务日期） |
 | Java 服务 | 单日概览、日期范围趋势、日环比分析、经营异常查询（/api/v1/dashboard/anomalies）、Bean Validation、统一响应、全局异常、requestId |
+| 自动化验证 | GitHub Actions 执行后端 `clean verify` 与数仓 Shell 静态检查；Testcontainers + MySQL 8 验证 MyBatis Mapper 真实 SQL |
 | 前端闭环 | 零售 BI Connector、KPI 经营概览、日环比变化分析、后端 API 联通、时间趋势图、CSV 导出 |
 
 `engineering_legacy_3x` 历史工程回归日期 `2026-04-08` 的核心结果：
@@ -194,7 +195,7 @@ retail_project/
 
 | 文件 | 作用 |
 |---|---|
-| `hive_sql/run_all_hive.sh` | 执行 20 步 Hive 完整主链路 |
+| `hive_sql/run_all_hive.sh` | 执行 14 步 ODS → DWD → DWS → ADS 基础主链路 |
 | `hive_sql/run_daily_hive_profiled.sh` | 日常执行、耗时记录与阶段续跑 |
 | `hive_sql/run_backfill_hive.sh` | 按日期升序回刷 |
 | `hive_sql/run_idempotency_check_hive.sh` | 行数与双 CRC32 内容指纹检查 |
@@ -279,7 +280,7 @@ amount = quantity × price
 星型模型包括：
 
 ```text
-dim_user（每日完整快照式 SCD2）
+dim_user（按业务日物化完整历史快照的 SCD2）
 dim_product
 dim_date
 dim_geo
@@ -331,14 +332,14 @@ ODS 入仓完整性
 ### 6.3 回刷、T+1 与幂等性
 
 ```bash
-# 日期区间回刷
-bash hive_sql/run_backfill_hive.sh 2026-04-01 2026-04-08
+# canonical：日期区间回刷
+bash hive_sql/run_backfill_hive.sh 2009-12-01 2009-12-03
 
-# 重跑前一天和当天
-bash hive_sql/run_t1_window_hive.sh 2026-04-08
+# canonical：重跑前一天和当天
+bash hive_sql/run_t1_window_hive.sh 2009-12-03
 
-# 比较重跑前后的行数和内容指纹
-bash hive_sql/run_idempotency_check_hive.sh 2026-04-03
+# canonical：比较重跑前后的行数和内容指纹
+bash hive_sql/run_idempotency_check_hive.sh 2009-12-03
 ```
 
 幂等检查当前覆盖 8 张核心 ODS / DWD / DWS / ADS 表，比较：
@@ -355,20 +356,32 @@ bash hive_sql/run_idempotency_check_hive.sh 2026-04-03
 
 ### 7.1 Shell 主链路
 
+日常完整链路推荐使用：
+
 ```bash
-bash hive_sql/run_all_hive.sh 2026-04-08
+HIVE_DATABASE=retail_canonical \
+bash hive_sql/run_daily_hive_profiled.sh 2009-12-03
 ```
 
-主入口共 20 步，覆盖：
+`run_daily_hive_profiled.sh` 按阶段执行：
 
 ```text
-ODS 建表与加载
-→ ODS 入仓门禁与内容检查
-→ DWD 与质量门禁
-→ DWS / ADS 与结果门禁
-→ 星型模型与质量门禁
-→ 最终结果展示
+ODS
+→ DWD + 质量门禁
+→ DWS / ADS + 结果门禁
+→ Star Schema
+→ 可选结果报告
 ```
+
+默认执行 Star Schema、跳过详细报告，并记录各阶段耗时；也可以从指定阶段继续执行，例如：
+
+```bash
+bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 dwd
+bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 mart
+bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 star
+```
+
+`run_all_hive.sh` 保留为 14 步 ODS → DWD → DWS → ADS 基础主链路，不包含 Star Schema 分支。
 
 脚本使用：
 
@@ -394,7 +407,7 @@ set -Eeuo pipefail
 dolphinscheduler/retail_hive_offline_warehouse_daily_demo.json
 ```
 
-JSON 使用占位参数，不包含真实服务器信息。当前 12 节点 DAG 是已验收的原主链路演示，不等同于 Shell 完整 20 步链路。
+JSON 使用占位参数，不包含真实服务器信息。当前 12 节点 DAG 是已验收的历史主链路调度演示；当前日常完整执行入口已演进为 `run_daily_hive_profiled.sh`，因此该 DAG 不等同于当前完整日常链路。
 
 ### 7.3 SQL 优化
 
@@ -446,15 +459,18 @@ retail_bi.bi_sales_overview_daily
 ### 8.2 生成与同步
 
 ```bash
-# 生成指定日期的 Hive ADS
-hive --hiveconf bizdate=2026-04-08 \
+# canonical：生成指定日期的 Hive ADS
+hive --database retail_canonical \
+  --hiveconf start_dt=2009-12-03 \
+  --hiveconf end_dt=2009-12-03 \
   -f hive_sql/29_ads_sales_overview_daily_hive.sql
 
 # 创建 MySQL 应用表
 mysql -u root -p < mysql/01_create_retail_bi_tables.sql
 
-# 同步指定日期
-bash sync/01_sync_sales_overview_to_mysql.sh 2026-04-08
+# canonical：同步指定日期
+HIVE_DATABASE=retail_canonical \
+bash sync/01_sync_sales_overview_to_mysql.sh 2009-12-03
 ```
 
 同步脚本会：
@@ -521,7 +537,7 @@ GET /api/v1/health
 #### 单日销售概览
 
 ```http
-GET /api/v1/dashboard/overview?date=2026-04-08
+GET /api/v1/dashboard/overview?date=2009-12-03
 ```
 
 规则：
@@ -533,7 +549,7 @@ GET /api/v1/dashboard/overview?date=2026-04-08
 #### 日期范围趋势
 
 ```http
-GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
+GET /api/v1/dashboard/overview/trend?startDate=2009-12-01&endDate=2009-12-03
 ```
 
 规则：
@@ -545,7 +561,7 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
 - 单次最多包含 31 个自然日；
 - 结果按 `dt` 升序返回。
 
-成功响应示例：
+历史工程 profile 的成功响应格式示例（当前 canonical 数据返回 `sourceSystem=retail_canonical_ads`）：
 
 ```json
 {
@@ -580,7 +596,7 @@ GET /api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
 #### 日环比对比
 
 ```http
-GET /api/v1/dashboard/overview/comparison?date=2026-04-08
+GET /api/v1/dashboard/overview/comparison?date=2009-12-13
 ```
 
 功能：对比当前日与同一 source_system 下上一可用业务日期的经营数据，计算五项指标的环比变化百分比。
@@ -598,20 +614,22 @@ GET /api/v1/dashboard/overview/comparison?date=2026-04-08
 
 ### 9.3 CORS 边界
 
-当前后端仅允许本机开发来源：
+当前后端对 `/api/**` 明确允许以下来源：
 
 ```text
 http://localhost:*
 http://127.0.0.1:*
+https://datainsightkit.com
+https://2026heita.github.io
 ```
 
-公网前端如需直接调用后端，需要显式配置正式域名，并评估 HTTPS、鉴权和网络暴露风险。项目没有为了临时联调使用无限制 `*` 放行。
+仅允许 `GET` / `OPTIONS`，暴露 `X-Request-Id` 响应头，不使用无限制 `*` 来源放行。
 
 ---
 
-## 9. 经营异常检测
+## 10. 经营异常检测
 
-### 9.1 Hive ADS 经营异常表
+### 10.1 Hive ADS 经营异常表
 
 **表名**：`ads_sales_anomaly_daily_hive`
 
@@ -660,7 +678,7 @@ http://127.0.0.1:*
 
 **比较口径说明**：这里比较的是"上一可用业务日"，不是自然日 yesterday。例如 2009-12-13 的上一可用业务日为 2009-12-11，因为 2009-12-12 没有业务数据。
 
-### 9.2 异常指标解释
+### 10.2 异常指标解释
 
 **销售额核心拆解**：
 
@@ -676,7 +694,7 @@ sales = orders × avg_order_value
 
 **边界说明**：经营异常检测和指标分解不等于因果推断。当前实现是规则式经营异常检测 + 指标分解，不是根因分析系统、不是 AI 异常检测、不是机器学习模型。
 
-### 9.3 Hive → MySQL Serving
+### 10.3 Hive → MySQL Serving
 
 **MySQL Serving 表**：`retail_bi.bi_sales_anomaly_daily`
 
@@ -692,7 +710,7 @@ sales = orders × avg_order_value
 
 604 个业务日期已完成批量同步。
 
-### 9.4 Spring Boot 异常 API
+### 10.4 Spring Boot 异常 API
 
 **接口**：
 
@@ -710,9 +728,9 @@ GET /api/v1/dashboard/anomalies?startDate=yyyy-MM-dd&endDate=yyyy-MM-dd
 
 ---
 
-## 10. 已验证结果
+## 11. 已验证结果
 
-### 10.1 `engineering_legacy_3x` 历史工程回归日期：`2026-04-08`
+### 11.1 `engineering_legacy_3x` 历史工程回归日期：`2026-04-08`
 
 ```text
 源表 retail                 3,202,113
@@ -744,7 +762,7 @@ MySQL 数据质量门禁       20 / 20 PASS
 MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 ```
 
-### 10.2 Canonical 真实 SCD2 验证
+### 11.2 Canonical 真实 SCD2 验证
 
 **验证范围**：Star 历史已连续回刷并验证至 2010-03-04，覆盖 73 个真实业务日期；其中在 2010-03-04 对 customerid=12431 的 Belgium → Australia 真实属性变化进行了重点 SCD2 验证。完整 DWD 保留 604 个真实业务日期。
 
@@ -756,13 +774,13 @@ MySQL 当前批次日志       START=1 / SUCCESS=1 / FAILED=0
 ![事实表关联 SCD2 新版本验证](docs/canonical_validation_screenshots/customer_12431_fact_version_join_20100304.png)
 > 证明：2010-03-04 fact_order 正确关联 Australia 新 user_id=57d1ccdac3e283cfd7d9eeb640f56ef5，fact_rows=17，fact_amount=394.59。
 
-### 10.3 历史多日验证
+### 11.3 历史多日验证
 
 `docs/multiday_validation_screenshots/` 保存了较早数据版本的多日分区、区间回刷、幂等性和 T+1 验证截图。
 
 历史基线中的 DWD 行数和国家数与当前完整回归不同，因此两组数据只用于证明不同阶段的工程能力，不能直接横向比较业务结果。
 
-### 10.4 BI 应用链路
+### 11.4 BI 应用链路
 
 **历史工程验证（engineering_legacy_3x）**：
 
@@ -799,14 +817,14 @@ Spring Boot 环比业务语义已修正并真实验证：
 ![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
 > 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
 > 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
-> Spring Boot 自动化测试：Tests run: 28, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS。
+> Spring Boot 自动化测试：当前单元测试与集成测试全部通过，其中包含基于 Testcontainers + MySQL 8 的 SalesOverviewMapper 集成测试，覆盖单日查询、日期范围查询和上一可用业务日查询；Backend CI 执行 `./mvnw -B clean verify`。
 
 前端 canonical 日环比验证：
 
 ![Canonical 前端日环比验证](docs/result_screenshots/13_retail_bi_canonical_business_day_comparison.png)
 > 前端展示 2009-12-13 与上一可用业务日 2009-12-11 的经营指标比较，跳过无数据的 2009-12-12。对应 API 验证结果中 comparisonAvailable=true、sourceSystem=retail_canonical_ads。
 
-### 10.5 经营异常检测链路验证
+### 11.5 经营异常检测链路验证
 
 Hive 经营异常 ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
 
@@ -849,7 +867,7 @@ Spring Boot 异常 API 真实验证：
 
 ---
 
-## 11. 运行截图
+## 12. 运行截图
 
 目录：
 
@@ -888,7 +906,9 @@ docs/multiday_validation_screenshots/
 
 ---
 
-## 12. 本地最小复现
+## 13. 本地最小复现
+
+> 本节使用仓库内 `data/sample/retail_sample.csv` 做最小环境复现，因此示例业务日期沿用样例文件中的 `2026-04-08`。该日期属于本地功能样例，不代表当前 canonical 真实业务数据口径；canonical 主线使用 2009—2011 年真实业务日期。
 
 详细说明：
 
@@ -896,7 +916,7 @@ docs/multiday_validation_screenshots/
 - [Hive 迁移与工程设计](hive_sql/hive_migration_design.md)
 - [DolphinScheduler 工作流设计](dolphinscheduler/workflow_design.md)
 
-### 12.1 创建样例源表
+### 13.1 创建样例源表
 
 > `00_bootstrap_sample_source_hive.sql` 会删除并重建 `retail`，只应在独立测试环境执行。
 
@@ -906,20 +926,20 @@ hive \
   -f hive_sql/00_bootstrap_sample_source_hive.sql
 ```
 
-### 12.2 执行 Hive 主链路
+### 13.2 执行 Hive 主链路
 
 ```bash
 bash hive_sql/run_all_hive.sh 2026-04-08
 ```
 
-### 12.3 创建并同步 BI 应用表
+### 13.3 创建并同步 BI 应用表
 
 ```bash
 mysql -u root -p < mysql/01_create_retail_bi_tables.sql
 bash sync/01_sync_sales_overview_to_mysql.sh 2026-04-08
 ```
 
-### 12.4 启动 Java 服务
+### 13.4 启动 Java 服务
 
 ```powershell
 cd backend\retail-bi-server
@@ -937,7 +957,7 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ---
 
-## 13. 核心设计取舍
+## 14. 核心设计取舍
 
 ### 为什么 Java 不查询明细并现场聚合？
 
@@ -957,7 +977,7 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ---
 
-## 14. 当前边界
+## 15. 当前边界
 
 本项目当前不包含：
 
@@ -965,13 +985,14 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 - MySQL 到 Hive 的自动同步任务；
 - 任意维度的动态聚合查询；
 - 订单明细钻取与分页接口；
-- 登录权限、缓存、OpenAPI、Docker 化后端和生产级 CI/CD；
+- 登录权限、缓存、OpenAPI 和 Docker 化后端；
+- 已使用 GitHub Actions 覆盖后端 Maven `clean verify` 与数仓 Shell `bash -n` / ShellCheck，但尚未实现自动部署、环境晋级、制品发布、回滚等 CD / 生产级发布流水线；
 - 公网可直接访问的后端服务；
 - 完整生产级监控和高可用部署。
 
 其他边界：
 
-- DolphinScheduler JSON 尚未覆盖 Shell 完整 20 步主链路；
+- DolphinScheduler JSON 仍保留为已验收的 12 节点历史主链路演示，尚未按当前 `run_daily_hive_profiled.sh` 的阶段化日常完整链路重新编排；
 - 当前 canonical 已验收基线 reject=0；新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑；
 - SCD2 历史回刷保护仍是独立脚本；
 - Star 历史已连续回刷并验证至 2010-03-04，覆盖 73 个真实业务日期；其中在 2010-03-04 对 customerid=12431 的 Belgium → Australia 真实属性变化进行了重点 SCD2 验证。完整 DWD 保留 604 个真实业务日期；
@@ -982,7 +1003,7 @@ GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&e
 
 ---
 
-## 15. React BI 展示效果
+## 16. React BI 展示效果
 
 React BI 前端项目已实现零售 BI 数据连接器，完整闭环：
 
@@ -1010,7 +1031,7 @@ Hive ADS → Shell 同步 → MySQL → Spring Boot API → React 前端展示
 
 ---
 
-## 16. 延伸文档
+## 17. 延伸文档
 
 | 文档 | 内容 |
 |---|---|
@@ -1027,7 +1048,7 @@ Hive ADS → Shell 同步 → MySQL → Spring Boot API → React 前端展示
 
 ---
 
-## 17. 公开仓库说明
+## 18. 公开仓库说明
 
 仓库只应保留：
 
