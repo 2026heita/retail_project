@@ -1,0 +1,55 @@
+name: Data Warehouse CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "hive_sql/**"
+      - "sync/**"
+      - ".github/workflows/data-warehouse-ci.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "hive_sql/**"
+      - "sync/**"
+      - ".github/workflows/data-warehouse-ci.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-warehouse-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-checks:
+    name: Shell checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check Bash syntax
+        shell: bash
+        run: |
+          find hive_sql sync \
+            -type f -name "*.sh" \
+            -print0 \
+            | xargs -0 -r -n1 bash -n
+
+      - name: Run ShellCheck
+        shell: bash
+        run: |
+          find hive_sql sync \
+            -type f -name "*.sh" \
+            -print0 \
+            | xargs -0 -r shellcheck --severity=warning
