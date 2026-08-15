@@ -15,9 +15,6 @@ set -Eeuo pipefail
 # 4. 不删除范围外已有数据。
 # ============================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SYNC_SCRIPT="${SCRIPT_DIR}/01_sync_sales_overview_to_mysql.sh"
-
 HIVE_DATABASE="${HIVE_DATABASE:-retail_canonical}"
 SOURCE_SYSTEM="${SOURCE_SYSTEM:-retail_canonical_ads}"
 
