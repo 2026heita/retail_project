@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    steps:
+           steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
@@ -46,7 +46,7 @@ jobs:
             -print0 \
             | xargs -0 -r -n1 bash -n
 
-        - name: Run ShellCheck
+      - name: Run ShellCheck
         shell: bash
         run: |
           find hive_sql sync \
