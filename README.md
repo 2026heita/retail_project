@@ -339,12 +339,15 @@ ODS 入仓完整性
 
 ```bash
 # canonical：日期区间回刷
+HIVE_DATABASE=retail_canonical \
 bash hive_sql/run_backfill_hive.sh 2009-12-01 2009-12-03
 
 # canonical：重跑前一天和当天
+HIVE_DATABASE=retail_canonical \
 bash hive_sql/run_t1_window_hive.sh 2009-12-03
 
 # canonical：比较重跑前后的行数和内容指纹
+HIVE_DATABASE=retail_canonical \
 bash hive_sql/run_idempotency_check_hive.sh 2009-12-03
 ```
 

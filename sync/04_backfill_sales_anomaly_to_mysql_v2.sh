@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+RECONCILE_SCRIPT="${BASE_DIR}/reconcile_anomaly.py"
 
 HIVE_DATABASE="${HIVE_DATABASE:-retail_canonical}"
 SOURCE_SYSTEM="${SOURCE_SYSTEM:-retail_canonical_anomaly_ads}"
@@ -39,6 +41,11 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ ! -f "${RECONCILE_SCRIPT}" ]]; then
+    echo "错误：缺少对账脚本：${RECONCILE_SCRIPT}"
+    exit 1
+fi
+
 echo "=========================================="
 echo "开始范围式批量同步经营异常数据 V2"
 echo "Hive：${HIVE_DATABASE}.ads_sales_anomaly_daily_hive"
@@ -54,11 +61,16 @@ fi
 
 TEMP_HIVE_DATA="$(mktemp)"
 TEMP_MYSQL_SQL="$(mktemp)"
+TEMP_MYSQL_DATA="$(mktemp)"
 MYSQL_CNF="$(mktemp)"
 
 cleanup() {
     unset MYSQL_PASSWORD
-    rm -f "${TEMP_HIVE_DATA}" "${TEMP_MYSQL_SQL}" "${MYSQL_CNF}"
+    rm -f \
+    "${TEMP_HIVE_DATA}" \
+    "${TEMP_MYSQL_SQL}" \
+    "${TEMP_MYSQL_DATA}" \
+    "${MYSQL_CNF}"
 }
 
 trap cleanup EXIT
@@ -281,21 +293,47 @@ fi
 mysql \
     --defaults-extra-file="${MYSQL_CNF}" \
     --database="${MYSQL_DB}" \
+    --batch \
+    --raw \
+    --skip-column-names \
     -e "
 SELECT
-    dt,
-    sales_change_pct,
-    sales_loss_amount,
-    orders_change_pct,
-    customers_change_pct,
-    quantity_change_pct,
-    aov_change_pct,
+    DATE_FORMAT(dt, '%Y-%m-%d'),
+    total_sales,
+    total_orders,
+    total_customers,
+    total_quantity,
+    avg_order_value,
+    IFNULL(DATE_FORMAT(prev_dt, '%Y-%m-%d'), '\\N'),
+    IFNULL(prev_sales, '\\N'),
+    IFNULL(sales_change_pct, '\\N'),
+    IFNULL(sales_loss_amount, '\\N'),
+    IFNULL(orders_change_pct, '\\N'),
+    IFNULL(customers_change_pct, '\\N'),
+    IFNULL(quantity_change_pct, '\\N'),
+    IFNULL(aov_change_pct, '\\N'),
     anomaly_level,
-    primary_driver
+    IFNULL(primary_driver, '\\N')
 FROM ${MYSQL_TABLE}
-WHERE dt = '2010-09-28'
-  AND source_system = '${SOURCE_SYSTEM}';
-"
+WHERE dt BETWEEN '${START_DT}' AND '${END_DT}'
+  AND source_system = '${SOURCE_SYSTEM}'
+ORDER BY dt;
+" > "${TEMP_MYSQL_DATA}" || {
+    echo "错误：MySQL 目标数据导出失败。"
+    exit 1
+}
+
+echo
+echo "开始 Hive / MySQL 逐字段对账..."
+
+if ! python3 \
+    "${RECONCILE_SCRIPT}" \
+    "${TEMP_HIVE_DATA}" \
+    "${TEMP_MYSQL_DATA}"
+then
+    echo "BLOCK：Hive / MySQL 异常数据逐字段对账失败。"
+    exit 1
+fi
 
 echo
 echo "=========================================="
