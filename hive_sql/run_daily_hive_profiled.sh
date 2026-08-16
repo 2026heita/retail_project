@@ -39,6 +39,9 @@ BATCH_DT="${BATCH_DT:-}"
 START_DT="${START_DT:-${BIZDATE}}"
 END_DT="${END_DT:-${BIZDATE}}"
 
+export HIVE_DATABASE
+export BATCH_DT
+
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
     echo "Usage: bash run_daily_hive_profiled.sh YYYY-MM-DD [ods|dwd|mart|star|report]"
