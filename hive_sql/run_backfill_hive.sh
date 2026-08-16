@@ -18,6 +18,8 @@ START_DATE="${1:-}"
 END_DATE="${2:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN_ALL_SCRIPT="${BASE_DIR}/run_all_hive.sh"
+HIVE_DATABASE="${HIVE_DATABASE:-default}"
+export HIVE_DATABASE
 
 if [ -z "${START_DATE}" ] || [ -z "${END_DATE}" ]; then
     echo "ERROR: start_date and end_date are required."
@@ -40,42 +42,73 @@ if [ ! -f "${RUN_ALL_SCRIPT}" ]; then
     exit 1
 fi
 
-CURRENT_DATE="$(date -d "${START_DATE}" +%F)"
+START_DATE_NORM="$(date -d "${START_DATE}" +%F)"
 END_DATE_NORM="$(date -d "${END_DATE}" +%F)"
 
-if [ "$(date -d "${CURRENT_DATE}" +%s)" -gt \
+if [ "$(date -d "${START_DATE_NORM}" +%s)" -gt \
      "$(date -d "${END_DATE_NORM}" +%s)" ]; then
     echo "ERROR: start_date must be earlier than or equal to end_date."
-    echo "start_date: ${CURRENT_DATE}"
-    echo "end_date: ${END_DATE_NORM}"
     exit 1
 fi
 
 echo "========================================"
 echo "Start Hive backfill job"
-echo "start_date: ${CURRENT_DATE}"
+echo "start_date: ${START_DATE_NORM}"
 echo "end_date:   ${END_DATE_NORM}"
-echo "base_dir:   ${BASE_DIR}"
+echo "database:   ${HIVE_DATABASE}"
 echo "========================================"
 
-while [ "$(date -d "${CURRENT_DATE}" +%s)" -le \
-        "$(date -d "${END_DATE_NORM}" +%s)" ]
+if ! BUSINESS_DATES="$(
+    hive --database "${HIVE_DATABASE}" -S -e "
+        SELECT bizdate
+        FROM (
+            SELECT DISTINCT
+                FROM_UNIXTIME(
+                    COALESCE(
+                        UNIX_TIMESTAMP(TRIM(CAST(InvoiceDate AS STRING)), 'yyyy-MM-dd HH:mm:ss'),
+                        UNIX_TIMESTAMP(TRIM(CAST(InvoiceDate AS STRING)), 'yyyy-MM-dd HH:mm'),
+                        UNIX_TIMESTAMP(TRIM(CAST(InvoiceDate AS STRING)), 'd/M/yyyy HH:mm:ss'),
+                        UNIX_TIMESTAMP(TRIM(CAST(InvoiceDate AS STRING)), 'd/M/yyyy HH:mm')
+                    ),
+                    'yyyy-MM-dd'
+                ) AS bizdate
+            FROM retail
+        ) t
+        WHERE bizdate BETWEEN '${START_DATE_NORM}' AND '${END_DATE_NORM}'
+        ORDER BY bizdate;
+    " 2>/dev/null
+)"; then
+    echo "ERROR: failed to query business dates."
+    exit 1
+fi
+
+BUSINESS_DATES="$(
+    printf '%s\n' "${BUSINESS_DATES}" |
+    grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || true
+)"
+
+if [ -z "${BUSINESS_DATES}" ]; then
+    echo "No business dates found in the requested range."
+    exit 0
+fi
+
+while IFS= read -r CURRENT_DATE
 do
+    [ -z "${CURRENT_DATE}" ] && continue
+
     echo "========================================"
     echo "Backfill bizdate: ${CURRENT_DATE}"
     echo "========================================"
 
-    if ! bash "${RUN_ALL_SCRIPT}" "${CURRENT_DATE}"; then
+if ! RUN_STAR=0 bash "${RUN_ALL_SCRIPT}" "${CURRENT_DATE}"; then
         echo "ERROR: backfill failed at bizdate=${CURRENT_DATE}"
-        echo "Remaining dates were not executed."
+        echo "Remaining business dates were not executed."
         exit 1
     fi
-
-    CURRENT_DATE="$(date -d "${CURRENT_DATE} +1 day" +%F)"
-done
+done <<< "${BUSINESS_DATES}"
 
 echo "========================================"
 echo "Hive backfill job finished successfully"
-echo "start_date: $(date -d "${START_DATE}" +%F)"
+echo "start_date: ${START_DATE_NORM}"
 echo "end_date:   ${END_DATE_NORM}"
 echo "========================================"

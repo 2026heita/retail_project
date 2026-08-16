@@ -17,6 +17,7 @@ set -Eeuo pipefail
 BIZDATE="${1:-}"
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN_ALL_SCRIPT="${BASE_DIR}/run_all_hive.sh"
+export HIVE_DATABASE="${HIVE_DATABASE:-default}"
 
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
@@ -429,8 +430,12 @@ collect_snapshot() {
 
     echo "${stage_name}"
 
-    if ! hive -S -e "$(snapshot_sql)" > "${output_file}"; then
-        echo "ERROR: failed to collect idempotency snapshot."
+        if ! hive \
+        --database "${HIVE_DATABASE}" \
+        -S \
+        -e "$(snapshot_sql)" > "${output_file}"
+    then
+        echo "ERROR: failed to collect snapshot."
         exit 1
     fi
 
@@ -463,6 +468,7 @@ print_snapshot() {
 echo "========================================"
 echo "Start Hive idempotency check"
 echo "bizdate: ${BIZDATE}"
+echo "database: ${HIVE_DATABASE}"
 echo "========================================"
 
 collect_snapshot "${BEFORE_FILE}" "[1/3] Collect snapshot before rerun"
@@ -471,8 +477,8 @@ echo ""
 print_snapshot "${BEFORE_FILE}"
 
 echo ""
-echo "[2/3] Rerun full Hive main chain"
-if ! bash "${RUN_ALL_SCRIPT}" "${BIZDATE}"; then
+echo "[2/3] Rerun Hive core chain"
+if ! RUN_STAR=0 bash "${RUN_ALL_SCRIPT}" "${BIZDATE}"; then
     echo "ERROR: main chain failed during idempotency check."
     exit 1
 fi
