@@ -71,6 +71,20 @@
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+
+            <testResource>
+                <directory>../../mysql</directory>
+                <targetPath>mysql</targetPath>
+                <includes>
+                    <include>01_create_retail_bi_tables.sql</include>
+                </includes>
+            </testResource>
+        </testResources>
+
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

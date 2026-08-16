@@ -24,7 +24,9 @@ class SalesOverviewMapperIntegrationTest {
     @Container
     @ServiceConnection
     static final MySQLContainer MYSQL =
-            new MySQLContainer("mysql:8.0.36");
+            new MySQLContainer("mysql:8.0.36")
+                    .withDatabaseName("retail_bi")
+                    .withInitScript("mysql/01_create_retail_bi_tables.sql");
 
     @Autowired
     private SalesOverviewMapper salesOverviewMapper;
@@ -34,19 +36,7 @@ class SalesOverviewMapperIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.execute("DROP TABLE IF EXISTS bi_sales_overview_daily");
-
-        jdbcTemplate.execute("""
-                CREATE TABLE bi_sales_overview_daily (
-                    dt DATE NOT NULL PRIMARY KEY,
-                    total_sales DECIMAL(18, 2) NOT NULL,
-                    total_orders BIGINT NOT NULL,
-                    total_customers BIGINT NOT NULL,
-                    total_quantity BIGINT NOT NULL,
-                    avg_order_value DECIMAL(18, 2) NOT NULL,
-                    source_system VARCHAR(64) NOT NULL
-                )
-                """);
+        jdbcTemplate.update("DELETE FROM bi_sales_overview_daily");
 
         jdbcTemplate.update("""
                 INSERT INTO bi_sales_overview_daily (
