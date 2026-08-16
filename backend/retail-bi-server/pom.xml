@@ -81,7 +81,9 @@
                 <targetPath>mysql</targetPath>
                 <includes>
                     <include>01_create_retail_bi_tables.sql</include>
+                    <include>03_create_retail_bi_anomaly_table.sql</include>
                 </includes>
+
             </testResource>
         </testResources>
 
