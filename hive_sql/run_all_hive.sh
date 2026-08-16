@@ -27,6 +27,7 @@ HIVE_DATABASE="${HIVE_DATABASE:-default}"
 BATCH_DT="${BATCH_DT:-${BIZDATE}}"
 START_DT="${START_DT:-${BIZDATE}}"
 END_DT="${END_DT:-${BIZDATE}}"
+RUN_STAR="${RUN_STAR:-1}"
 
 if [ -z "${BIZDATE}" ]; then
     echo "ERROR: bizdate is required."
@@ -199,7 +200,14 @@ run_hive_sql "[17/20] Build ADS customer preference" \
 
 run_result_quality_gate
 
-run_star_schema
+if [ "${RUN_STAR}" = "1" ]; then
+    run_star_schema
+else
+    echo "========================================"
+    echo "[19/20] Skip star schema"
+    echo "RUN_STAR=${RUN_STAR}"
+    echo "========================================"
+fi
 
 run_hive_sql "[20/20] Display warehouse results" \
     "${BASE_DIR}/09_check_hive_result.sql"
