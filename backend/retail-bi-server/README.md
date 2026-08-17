@@ -340,7 +340,7 @@ SERVER_PORT=8080                      # 服务端口（默认 8080）
 - 密码必须通过环境变量传入，不要硬编码
 - 默认数据库地址为 `localhost`，可通过 `RETAIL_DB_HOST` 覆盖为实际服务器地址
 - 生产环境应使用独立的数据库账号和权限
-- 不同环境部署时，应根据实际网络调整 MySQL 用户授权网段（参见 `mysql/02_create_retail_bi_users.local.sql`）
+- 不同环境部署时，应根据实际网络调整 MySQL 用户授权网段。公开模板 `mysql/02_create_retail_bi_users.example.sql` 默认 localhost；远程部署应在私有环境按实际网络单独配置 MySQL host 授权，不应把真实服务器网段写回公开模板。本地使用先复制为 `mysql/02_create_retail_bi_users.local.sql`（已被 `.gitignore` 忽略，不提交），替换密码后执行
 
 ## 启动方式
 
@@ -370,18 +370,16 @@ java -jar target/retail-bi-server-0.0.1-SNAPSHOT.jar
 
 ## 验证与测试
 
-### 运行单元测试
+### 运行自动化测试
 
-```bash
-.\mvnw.cmd test
+```powershell
+.\mvnw.cmd clean verify
 ```
 
-当前测试覆盖：
-- `RetailBiServerApplicationTests.java`：应用启动测试
-- `SalesOverviewControllerTest.java`：Controller 参数校验和响应结构测试（16 个测试）
-- `SalesOverviewMetricServiceImplTest.java`：Service 环比计算逻辑测试（7 个测试）
-
-总测试数：24 个（1 + 16 + 7）
+当前测试覆盖 Controller、Service，以及基于 Testcontainers + MySQL 8 的 Mapper 集成测试。
+Mapper 集成测试需要可用的 Docker 环境；本机未启动 Docker 时，
+Testcontainers 测试会因找不到 Docker environment 而失败，这不等同于业务断言失败。
+CI 使用 `clean verify` 执行完整后端验证。
 
 ### 手动验证接口
 
@@ -442,9 +440,14 @@ public record ApiResponse<T>(
 
 ### 4. CORS 配置
 
-`WebCorsConfig` 允许以下来源跨域访问：
+`WebCorsConfig` 对 `/api/**` 允许以下来源跨域访问：
 - `http://localhost:*`
 - `http://127.0.0.1:*`
+- `https://datainsightkit.com`
+- `https://2026heita.github.io`
+
+允许方法：仅 `GET` / `OPTIONS`
+暴露响应头：`X-Request-Id`
 
 生产环境应限制为实际域名。
 
@@ -457,21 +460,15 @@ public record ApiResponse<T>(
 
 ## 数据库表
 
-查询目标表：`bi_sales_overview_daily`
+Spring Boot 当前查询两张 Serving 表：
 
-表结构（由 `mysql/01_create_retail_bi_tables.sql` 创建）：
+- `bi_sales_overview_daily`：经营概览、趋势、日环比
+- `bi_sales_anomaly_daily`：经营异常查询
 
-```sql
-CREATE TABLE bi_sales_overview_daily (
-    dt DATE PRIMARY KEY,              -- 业务日期
-    total_sales DECIMAL(18,2),        -- 销售额
-    total_orders BIGINT,              -- 订单数
-    total_customers BIGINT,           -- 客户数
-    total_quantity BIGINT,            -- 销量
-    avg_order_value DECIMAL(18,2),    -- 客单价
-    source_system VARCHAR(32)         -- 数据来源
-);
-```
+建表脚本：
+
+- `mysql/01_create_retail_bi_tables.sql`
+- `mysql/03_create_retail_bi_anomaly_table.sql`
 
 数据由 Shell 脚本从 Hive ADS 同步，本服务只负责查询。
 
@@ -542,10 +539,11 @@ CREATE TABLE bi_sales_overview_daily (
 
 ## 前端联调
 
-React BI 前端项目已实现零售 BI 数据连接器，调用本服务的三个 API：
+React BI 前端项目已实现零售 BI 数据连接器，调用本服务的四个 API：
 
 | 接口 | 用途 |
 |---|---|
 | `GET /api/v1/dashboard/overview/trend` | 日期范围趋势数据，进入前端通用分析流程 |
 | `GET /api/v1/dashboard/overview` | 单日经营概览 KPI 卡片 |
 | `GET /api/v1/dashboard/overview/comparison` | 日环比变化百分比 |
+| `GET /api/v1/dashboard/anomalies` | 日期范围经营异常查询 |

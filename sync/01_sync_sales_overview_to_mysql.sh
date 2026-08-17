@@ -13,7 +13,7 @@ set -Eeuo pipefail
 BIZDATE="${1:-}"
 
 HIVE_DATABASE="${HIVE_DATABASE:-retail_canonical}"
-SOURCE_SYSTEM="${SOURCE_SYSTEM:-retail_canonical_ads}"
+SOURCE_SYSTEM="${SOURCE_SYSTEM:-}"
 
 MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -30,6 +30,20 @@ fi
 if [[ ! "${BIZDATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     echo "错误：业务日期格式必须为 yyyy-MM-dd。"
     exit 1
+fi
+
+# canonical 数据库允许使用明确且安全的默认来源标识。
+# 其他 Hive 数据库的数据来源无法由数据库名可靠推断，
+# 必须由调用方显式声明，避免误标为 canonical 数据。
+if [[ -z "${SOURCE_SYSTEM}" ]]; then
+    if [[ "${HIVE_DATABASE}" == "retail_canonical" ]]; then
+        SOURCE_SYSTEM="retail_canonical_ads"
+    else
+        echo "错误：非 canonical Hive 数据库必须显式设置 SOURCE_SYSTEM。"
+        echo "当前 HIVE_DATABASE=${HIVE_DATABASE}"
+        echo "示例：SOURCE_SYSTEM=local_sample_ads HIVE_DATABASE=default bash $0 ${BIZDATE}"
+        exit 1
+    fi
 fi
 
 echo "=========================================="

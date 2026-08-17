@@ -72,24 +72,49 @@ fi
 
 SOURCE_ROW="${SOURCE_ROWS[0]}"
 
-IFS=$'\t' read -r \
-    DT \
-    TOTAL_SALES \
-    TOTAL_ORDERS \
-    TOTAL_CUSTOMERS \
-    TOTAL_QUANTITY \
-    AVG_ORDER_VALUE \
-    PREV_DT \
-    PREV_SALES \
-    SALES_CHANGE_PCT \
-    SALES_LOSS_AMOUNT \
-    ORDERS_CHANGE_PCT \
-    CUSTOMERS_CHANGE_PCT \
-    QUANTITY_CHANGE_PCT \
-    AOV_CHANGE_PCT \
-    ANOMALY_LEVEL \
-    PRIMARY_DRIVER \
-    <<< "${SOURCE_ROW}"
+mapfile -d '' -t FIELDS < <(
+    python3 - "${SOURCE_ROW}" <<'PY'
+import csv
+import io
+import sys
+
+row = next(csv.reader(io.StringIO(sys.argv[1]), delimiter="\t"))
+
+if len(row) != 16:
+    print(
+        f"ERROR: expected 16 TSV columns, got {len(row)}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+for value in row:
+    sys.stdout.write(value)
+    sys.stdout.write("\0")
+PY
+)
+
+if [[ "${#FIELDS[@]}" -ne 16 ]]; then
+    echo "错误：解析后的异常数据字段数不是 16。"
+    echo "实际字段数：${#FIELDS[@]}"
+    exit 1
+fi
+
+DT="${FIELDS[0]}"
+TOTAL_SALES="${FIELDS[1]}"
+TOTAL_ORDERS="${FIELDS[2]}"
+TOTAL_CUSTOMERS="${FIELDS[3]}"
+TOTAL_QUANTITY="${FIELDS[4]}"
+AVG_ORDER_VALUE="${FIELDS[5]}"
+PREV_DT="${FIELDS[6]}"
+PREV_SALES="${FIELDS[7]}"
+SALES_CHANGE_PCT="${FIELDS[8]}"
+SALES_LOSS_AMOUNT="${FIELDS[9]}"
+ORDERS_CHANGE_PCT="${FIELDS[10]}"
+CUSTOMERS_CHANGE_PCT="${FIELDS[11]}"
+QUANTITY_CHANGE_PCT="${FIELDS[12]}"
+AOV_CHANGE_PCT="${FIELDS[13]}"
+ANOMALY_LEVEL="${FIELDS[14]}"
+PRIMARY_DRIVER="${FIELDS[15]}"
 
 echo "Hive 源端数据："
 echo "dt=${DT}"
@@ -249,24 +274,49 @@ WHERE dt = '${BIZDATE}'
 echo "MySQL 目标端数据："
 echo "${TARGET_ROW}"
 
-IFS=$'\t' read -r \
-    TARGET_DT \
-    TARGET_SALES \
-    TARGET_ORDERS \
-    TARGET_CUSTOMERS \
-    TARGET_QUANTITY \
-    TARGET_AVG \
-    TARGET_PREV_DT \
-    TARGET_PREV_SALES \
-    TARGET_SALES_CHANGE \
-    TARGET_SALES_LOSS \
-    TARGET_ORDERS_CHANGE \
-    TARGET_CUSTOMERS_CHANGE \
-    TARGET_QUANTITY_CHANGE \
-    TARGET_AOV_CHANGE \
-    TARGET_LEVEL \
-    TARGET_DRIVER \
-    <<< "${TARGET_ROW}"
+mapfile -d '' -t TARGET_FIELDS < <(
+    python3 - "${TARGET_ROW}" <<'PY'
+import csv
+import io
+import sys
+
+row = next(csv.reader(io.StringIO(sys.argv[1]), delimiter="\t"))
+
+if len(row) != 16:
+    print(
+        f"ERROR: expected 16 TSV columns, got {len(row)}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+for value in row:
+    sys.stdout.write(value)
+    sys.stdout.write("\0")
+PY
+)
+
+if [[ "${#TARGET_FIELDS[@]}" -ne 16 ]]; then
+    echo "错误：MySQL 对账数据解析后的字段数不是 16。"
+    echo "实际字段数：${#TARGET_FIELDS[@]}"
+    exit 1
+fi
+
+TARGET_DT="${TARGET_FIELDS[0]}"
+TARGET_SALES="${TARGET_FIELDS[1]}"
+TARGET_ORDERS="${TARGET_FIELDS[2]}"
+TARGET_CUSTOMERS="${TARGET_FIELDS[3]}"
+TARGET_QUANTITY="${TARGET_FIELDS[4]}"
+TARGET_AVG="${TARGET_FIELDS[5]}"
+TARGET_PREV_DT="${TARGET_FIELDS[6]}"
+TARGET_PREV_SALES="${TARGET_FIELDS[7]}"
+TARGET_SALES_CHANGE="${TARGET_FIELDS[8]}"
+TARGET_SALES_LOSS="${TARGET_FIELDS[9]}"
+TARGET_ORDERS_CHANGE="${TARGET_FIELDS[10]}"
+TARGET_CUSTOMERS_CHANGE="${TARGET_FIELDS[11]}"
+TARGET_QUANTITY_CHANGE="${TARGET_FIELDS[12]}"
+TARGET_AOV_CHANGE="${TARGET_FIELDS[13]}"
+TARGET_LEVEL="${TARGET_FIELDS[14]}"
+TARGET_DRIVER="${TARGET_FIELDS[15]}"
 
 decimal_equal() {
     local left="$1"

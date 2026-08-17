@@ -35,6 +35,9 @@
 db_config.*
 config_local.*
 
+# Local database user credentials
+/mysql/02_create_retail_bi_users.local.sql
+
 # Full-size data files (never commit to Git)
 data/raw/*
 !data/raw/.gitkeep

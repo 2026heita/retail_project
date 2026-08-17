@@ -247,8 +247,9 @@ Java 服务不会扫描大规模订单明细，也不会重复聚合 Hive 已经
 ```text
 retail_project/
 ├── README.md
-├── sample_data/
-│   └── retail_sample.csv
+├── data/
+│   └── sample/
+│       └── retail_sample.csv
 ├── sql/                                      # MySQL 分析、DWS / ADS、日志和质量检查
 ├── scripts/                                  # MySQL 本地执行与调度演示
 ├── hive_sql/                                 # Hive 数仓 SQL、质量门禁与 Shell 主链路
@@ -263,10 +264,13 @@ retail_project/
 │   └── run_*_quality_gate_hive.sh
 ├── mysql/                                    # BI 应用库建表与账号示例
 │   ├── 01_create_retail_bi_tables.sql
-│   └── 02_create_retail_bi_users.local.sql
+│   ├── 02_create_retail_bi_users.example.sql
+│   └── 03_create_retail_bi_anomaly_table.sql
 ├── sync/                                     # Hive ADS → MySQL 应用表
 │   ├── 01_sync_sales_overview_to_mysql.sh
-│   └── 02_backfill_sales_overview_to_mysql.sh
+│   ├── 02_backfill_sales_overview_to_mysql.sh
+│   ├── 03_sync_sales_anomaly_to_mysql.sh
+│   └── 04_backfill_sales_anomaly_to_mysql_v2.sh
 ├── backend/
 │   └── retail-bi-server/                     # Spring Boot 指标 API
 │       ├── pom.xml
@@ -368,12 +372,13 @@ bash hive_sql/30_backfill_ads_sales_overview_daily.sh 2009-12-01 2011-12-09
 
 ```bash
 mysql -u root -p < mysql/01_create_retail_bi_tables.sql
+mysql -u root -p < mysql/03_create_retail_bi_anomaly_table.sql
 ```
 
-账号脚本中的密码必须在本地替换，不能把真实密码提交到仓库：
+创建最小权限账号：`mysql/02_create_retail_bi_users.example.sql` 是仓库可提交模板，本地使用前复制为 `mysql/02_create_retail_bi_users.local.sql`（该文件已被 `.gitignore` 忽略，不会提交），替换其中的 `__SYNC_PASSWORD__` / `__API_PASSWORD__` 占位符后执行：
 
 ```text
-mysql/02_create_retail_bi_users.local.sql
+example.sql → 复制为 local.sql → 替换 __SYNC_PASSWORD__ / __API_PASSWORD__ → 执行 local.sql
 ```
 
 同步单日数据：
@@ -475,14 +480,14 @@ GET /api/v1/dashboard/overview/trend?startDate=2009-12-01&endDate=2009-12-03
 - `startDate`、`endDate` 必填；
 - 日期格式为 `yyyy-MM-dd`；
 - 两个日期都不能晚于当前日期；
-- 开始日期不能早于结束日期；
+- 开始日期不能晚于结束日期；
 - 单次范围最多包含 31 个自然日；
 - 返回结果按 `dt` 升序排列。
 
 #### 环比查询
 
 ```http
-GET /api/v1/dashboard/comparison?date=2009-12-13
+GET /api/v1/dashboard/overview/comparison?date=2009-12-13
 ```
 
 规则：
@@ -668,7 +673,7 @@ hive --hiveconf bizdate=2026-04-08 -f hive_sql/32_dwd_normalization_validation_h
 仓库提供最小样例数据：
 
 ```text
-sample_data/retail_sample.csv
+data/sample/retail_sample.csv
 ```
 
 该文件用于验证 Hive 源表和数仓脚本能否在独立环境运行，不代表完整原始数据集。全量数据体积较大，公开仓库中不上传。
@@ -771,7 +776,7 @@ ods_retail_raw_hive → ods_retail_hive
 bash hive_sql/run_all_hive.sh 2026-04-08
 ```
 
-当前 `run_all_hive.sh` 共 20 个步骤：
+当前 `run_all_hive.sh` 共 21 个步骤：
 
 ```text
 01  创建 ODS Raw 表
@@ -791,9 +796,10 @@ bash hive_sql/run_all_hive.sh 2026-04-08
 15  构建客户层级分布 ADS
 16  构建国家销售排行 ADS
 17  构建高价值客户商品偏好 ADS
-18  执行 DWS / ADS 结果门禁
-19  构建星型模型并执行星型模型门禁
-20  展示最终结果
+18  构建 BI Overview ADS（经营总览日指标）
+19  执行 DWS / ADS 结果门禁
+20  构建星型模型并执行星型模型门禁
+21  展示最终结果
 ```
 
 脚本使用：
@@ -1540,23 +1546,23 @@ Hive ads_sales_overview_daily_hive
 
 Hive ADS 已完成全范围验证（604 个真实业务日期，2009-12-01 ~ 2011-12-09）：
 
-![Canonical ADS 全范围验证](docs/canonical_validation_screenshots/canonical_ads_sales_overview_full_validation.png)
+![Canonical ADS 全范围验证](canonical_validation_screenshots/canonical_ads_sales_overview_full_validation.png)
 > 验证结果：row_count=604，distinct_dt=604，min_dt=2009-12-01，max_dt=2011-12-09，total_sales=17,743,429.16。
 
 Hive → MySQL 同步已完成全范围验证：
 
-![Canonical Hive-MySQL 同步验证](docs/canonical_validation_screenshots/canonical_hive_mysql_full_sync_validation.png)
+![Canonical Hive-MySQL 同步验证](canonical_validation_screenshots/canonical_hive_mysql_full_sync_validation.png)
 > 验证结果：source_rows=604，target_rows=604，日期范围 2009-12-01 ~ 2011-12-09，total_sales=17,743,429.16，逐行对账 PASS。
 > MySQL 中保留两组数据：旧历史展示数据（source_system=hive_ads，8 行，2026-04-01 ~ 2026-04-08）和 canonical 数据（source_system=retail_canonical_ads，604 行）。
 
 Spring Boot API 已真实连接 canonical serving 数据：
 
-![Canonical Spring API 趋势验证](docs/canonical_validation_screenshots/canonical_spring_api_trend_validation.png)
+![Canonical Spring API 趋势验证](canonical_validation_screenshots/canonical_spring_api_trend_validation.png)
 > 趋势接口真实验证 2009-12-01 ~ 2009-12-03，返回数据与 Hive ADS / MySQL 完全一致，sourceSystem=retail_canonical_ads。
 
 Spring Boot 环比业务语义已修正并真实验证：
 
-![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
+![Canonical Spring 环比业务日期验证](canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
 > 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
 > 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
 > Spring Boot 自动化测试：单元测试与集成测试全部通过，其中包含基于 Testcontainers + MySQL 8 的 SalesOverviewMapper 集成测试，覆盖单日查询、日期范围查询和上一可用业务日查询；Backend CI 执行 `./mvnw -B clean verify`。
@@ -1603,7 +1609,7 @@ docs/result_screenshots/
 
 ![DWD 质量门禁通过](result_screenshots/03_dwd_quality_gate_passed.png)
 
-这些 DolphinScheduler 截图对应已验收的 12 节点演示 DAG，不代表当前 20 步 Shell 完整链路已经全部拆成调度节点。
+这些 DolphinScheduler 截图对应已验收的 12 节点演示 DAG，不代表当前 21 步 Shell 完整链路已经全部拆成调度节点。
 
 轻量 BI Dashboard 截图：
 
@@ -1656,7 +1662,7 @@ hive -e "SHOW DATABASES;"
 
 ```bash
 hive \
-  --hiveconf source_file=/path/to/retail_project/sample_data/retail_sample.csv \
+  --hiveconf source_file=/path/to/retail_project/data/sample/retail_sample.csv \
   -f hive_sql/00_bootstrap_sample_source_hive.sql
 ```
 
@@ -1726,7 +1732,7 @@ ${PROJECT_HOME}/hive/
 本项目不是生产级实时数仓，当前边界包括：
 
 - 使用按业务日期分区覆盖写入的离线批处理，不是 CDC 实时增量；
-- DolphinScheduler JSON 尚未同步 Shell 完整 20 步链路；
+- DolphinScheduler JSON 尚未同步 Shell 完整 21 步链路；
 - 当前 canonical 已验收基线 reject=0；新版 Reject 解析逻辑已支持 4 种日期格式并扩展到 6 类技术 Reject，目前仅完成 10 行功能样本验证，尚未使用新版逻辑对 1,067,371 行 canonical 数据执行完整重跑。
 - SCD2 回刷保护脚本尚未自动接入主入口；
 - 幂等性指纹只覆盖 8 张核心 ODS / DWD / DWS / ADS 表；

@@ -195,7 +195,7 @@ retail_project/
 
 | 文件 | 作用 |
 |---|---|
-| `hive_sql/run_all_hive.sh` | 执行 20 步完整主链路（ODS Raw/Reject/正常 ODS → ODS 入仓门禁 → DWD → DWD 门禁 → DWS/ADS → 结果门禁 → Star Schema → Star 门禁 → 结果展示） |
+| `hive_sql/run_all_hive.sh` | 执行 21 步完整主链路（ODS Raw/Reject/正常 ODS → ODS 入仓门禁 → DWD → DWD 门禁 → DWS/ADS → BI Overview ADS → 结果门禁 → Star Schema → Star 门禁 → 结果展示） |
 | `hive_sql/run_daily_hive_profiled.sh` | 日常执行、耗时记录与阶段续跑 |
 | `hive_sql/run_backfill_hive.sh` | 按日期升序回刷 |
 | `hive_sql/run_idempotency_check_hive.sh` | 行数与双 CRC32 内容指纹检查 |
@@ -390,7 +390,7 @@ bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 mart
 bash hive_sql/run_daily_hive_profiled.sh 2009-12-03 star
 ```
 
-`run_all_hive.sh` 是 20 步完整主链路，包含建表、门禁、Star Schema 和最终结果展示，是首次复现的完整入口。
+`run_all_hive.sh` 是 21 步完整主链路，包含建表、门禁、BI Overview ADS、Star Schema 和最终结果展示，是首次复现的完整入口。
 
 脚本使用：
 
@@ -490,7 +490,9 @@ bash sync/01_sync_sales_overview_to_mysql.sh 2009-12-03
 4. 对比业务日期与五项指标；
 5. 对账不一致时返回非零退出码。
 
-`mysql/02_create_retail_bi_users.local.sql` 只包含密码占位符。真实密码必须在本地替换，不能提交到公开仓库。
+`mysql/02_create_retail_bi_users.example.sql` 是可提交的账号初始化模板，只保留密码占位符。
+本地使用时复制为 `mysql/02_create_retail_bi_users.local.sql`，替换为本机密码后执行；
+`local.sql` 已由 `.gitignore` 排除，不应提交到公开仓库。
 
 ### 8.3 演示日期说明
 
@@ -527,7 +529,8 @@ PowerShell 启动示例：
 cd backend\retail-bi-server
 
 $env:RETAIL_DB_HOST = "<mysql-host>"
-$env:RETAIL_DB_PASSWORD = "<local-password>"
+$env:RETAIL_DB_USERNAME = "retail_api_user"
+$env:RETAIL_DB_PASSWORD = "<API 用户本地密码>"
 
 .\mvnw.cmd clean test
 .\mvnw.cmd spring-boot:run
@@ -826,7 +829,7 @@ Spring Boot 环比业务语义已修正并真实验证：
 ![Canonical Spring 环比业务日期验证](docs/canonical_validation_screenshots/canonical_spring_comparison_business_date_validation.png)
 > 真实验证：2009-12-13 → 2009-12-11（跳过无数据的 2009-12-12），comparisonAvailable=true，两边 sourceSystem 均为 retail_canonical_ads。
 > 连续日期回归：2009-12-03 → 2009-12-02 仍然 PASS。
-> Spring Boot 自动化测试：当前单元测试与集成测试全部通过，其中包含基于 Testcontainers + MySQL 8 的 SalesOverviewMapper 集成测试，覆盖单日查询、日期范围查询和上一可用业务日查询；Backend CI 执行 `./mvnw -B clean verify`。
+> Spring Boot 自动化测试：当前单元测试与集成测试全部通过，其中包含基于 Testcontainers + MySQL 8、复用真实 MySQL DDL 的 SalesOverviewMapper / SalesAnomalyMapper 集成测试，覆盖单日查询、日期范围查询、上一可用业务日查询，以及异常等级过滤、source_system 隔离、日期排序和结果映射；Backend CI 执行 ./mvnw -B clean verify。
 
 前端 canonical 日环比验证：
 
@@ -944,24 +947,47 @@ bash hive_sql/run_all_hive.sh 2026-04-08
 ### 13.3 创建并同步 BI 应用表
 
 ```bash
+# 1. 创建 BI 数据库与 Serving 表
 mysql -u root -p < mysql/01_create_retail_bi_tables.sql
+mysql -u root -p < mysql/03_create_retail_bi_anomaly_table.sql
+
+# 2. 从公开模板创建本地账号配置
+cp mysql/02_create_retail_bi_users.example.sql \
+   mysql/02_create_retail_bi_users.local.sql
+
+# 3. 在 local.sql 中替换 __SYNC_PASSWORD__ 和 __API_PASSWORD__
+#    然后创建最小权限数据库账号
+mysql -u root -p < mysql/02_create_retail_bi_users.local.sql
+
+# 4. 同步本地样例 ADS
+HIVE_DATABASE=default \
+SOURCE_SYSTEM=local_sample_ads \
 bash sync/01_sync_sales_overview_to_mysql.sh 2026-04-08
 ```
+
+本地最小复现使用 `default` Hive 数据库，并将 Serving 数据显式标记为
+`source_system=local_sample_ads`。该标识仅表示仓库内公开样例数据，
+不代表 `canonical` 数据；canonical Serving 使用 `retail_canonical_ads`。
 
 ### 13.4 启动 Java 服务
 
 ```powershell
 cd backend\retail-bi-server
-$env:RETAIL_DB_PASSWORD = "<local-password>"
+
+$env:RETAIL_DB_USERNAME = "retail_api_user"
+$env:RETAIL_DB_PASSWORD = "<与 mysql/02_create_retail_bi_users.local.sql 中 __API_PASSWORD__ 对应的本地密码>"
+
 .\mvnw.cmd spring-boot:run
 ```
+
+Java 服务使用只读账号 `retail_api_user`；`RETAIL_DB_PASSWORD` 必须与本地账号配置中的 API 用户密码一致，不要使用 `retail_sync_user` 的同步密码。
 
 验证：
 
 ```text
 GET http://localhost:8080/api/v1/health
 GET http://localhost:8080/api/v1/dashboard/overview?date=2026-04-08
-GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-01&endDate=2026-04-08
+GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-08&endDate=2026-04-08
 ```
 
 ---

@@ -1,8 +1,10 @@
+CREATE DATABASE IF NOT EXISTS retail_bi
+DEFAULT CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
+
 USE retail_bi;
 
-DROP TABLE IF EXISTS bi_sales_anomaly_daily;
-
-CREATE TABLE bi_sales_anomaly_daily (
+CREATE TABLE IF NOT EXISTS bi_sales_anomaly_daily (
     dt DATE NOT NULL COMMENT '业务日期',
 
     total_sales DECIMAL(18,2) NOT NULL DEFAULT 0.00

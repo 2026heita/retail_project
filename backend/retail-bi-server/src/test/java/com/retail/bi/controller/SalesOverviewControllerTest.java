@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import static org.hamcrest.Matchers.nullValue;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -297,7 +298,7 @@ class SalesOverviewControllerTest {
     void getComparison_previousDataNotAvailable_returns200() throws Exception {
         // Given
         LocalDate validDate = LocalDate.of(2026, 4, 8);
-        LocalDate comparisonDate = LocalDate.of(2026, 4, 7);
+
 
         SalesOverviewVO currentVO = new SalesOverviewVO();
         currentVO.setDt(validDate);
@@ -310,7 +311,7 @@ class SalesOverviewControllerTest {
 
         SalesOverviewComparisonVO comparisonVO = new SalesOverviewComparisonVO();
         comparisonVO.setDate(validDate);
-        comparisonVO.setComparisonDate(comparisonDate);
+        comparisonVO.setComparisonDate(null);
         comparisonVO.setComparisonAvailable(false);
         comparisonVO.setCurrent(currentVO);
         comparisonVO.setPrevious(null);
@@ -324,11 +325,11 @@ class SalesOverviewControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.date").value(validDate.toString()))
-                .andExpect(jsonPath("$.data.comparisonDate").value(comparisonDate.toString()))
+                .andExpect(jsonPath("$.data.comparisonDate").value(nullValue()))
                 .andExpect(jsonPath("$.data.comparisonAvailable").value(false))
                 .andExpect(jsonPath("$.data.current").exists())
-                .andExpect(jsonPath("$.data.previous").doesNotExist())
-                .andExpect(jsonPath("$.data.changePercent").doesNotExist())
+                .andExpect(jsonPath("$.data.previous").value(nullValue()))
+                .andExpect(jsonPath("$.data.changePercent").value(nullValue()))
                 .andExpect(jsonPath("$.requestId").exists());
     }
 }

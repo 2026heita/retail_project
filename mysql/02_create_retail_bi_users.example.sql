@@ -13,22 +13,22 @@ ALTER USER 'retail_sync_user'@'localhost'
 IDENTIFIED WITH caching_sha2_password
 BY '__SYNC_PASSWORD__';
 
-GRANT SELECT, INSERT, UPDATE, DELETE
+GRANT SELECT, INSERT, UPDATE
 ON retail_bi.*
 TO 'retail_sync_user'@'localhost';
 
 
--- Java 查询账号：允许 Windows 主机通过虚拟机网段访问
-CREATE USER IF NOT EXISTS 'retail_api_user'@'192.168.85.%'
+-- Java 查询账号：本地最小复现默认从 localhost 访问 MySQL
+CREATE USER IF NOT EXISTS 'retail_api_user'@'localhost'
 IDENTIFIED WITH caching_sha2_password
 BY '__API_PASSWORD__';
 
-ALTER USER 'retail_api_user'@'192.168.85.%'
+ALTER USER 'retail_api_user'@'localhost'
 IDENTIFIED WITH caching_sha2_password
 BY '__API_PASSWORD__';
 
 GRANT SELECT
 ON retail_bi.*
-TO 'retail_api_user'@'192.168.85.%';
+TO 'retail_api_user'@'localhost';
 
 FLUSH PRIVILEGES;
