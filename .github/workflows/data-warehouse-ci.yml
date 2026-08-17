@@ -46,6 +46,11 @@ jobs:
             -print0 \
             | xargs -0 -r -n1 bash -n
 
+      - name: Check Python syntax
+        shell: bash
+        run: |
+          python3 -m py_compile sync/reconcile_anomaly.py
+
       - name: Run ShellCheck
         shell: bash
         run: |
