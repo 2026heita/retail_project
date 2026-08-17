@@ -4,7 +4,7 @@ BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 RECONCILE_SCRIPT="${BASE_DIR}/reconcile_anomaly.py"
 
 HIVE_DATABASE="${HIVE_DATABASE:-retail_canonical}"
-SOURCE_SYSTEM="${SOURCE_SYSTEM:-retail_canonical_anomaly_ads}"
+SOURCE_SYSTEM="${SOURCE_SYSTEM:-}"
 
 MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -34,6 +34,20 @@ fi
 if [[ "${START_DT}" > "${END_DT}" ]]; then
     echo "错误：START_DT 不能晚于 END_DT。"
     exit 1
+fi
+
+# canonical 数据库允许使用明确且安全的默认来源标识。
+# 其他 Hive 数据库的数据来源无法由数据库名可靠推断，
+# 必须由调用方显式声明，避免误标为 canonical 数据。
+if [[ -z "${SOURCE_SYSTEM}" ]]; then
+    if [[ "${HIVE_DATABASE}" == "retail_canonical" ]]; then
+        SOURCE_SYSTEM="retail_canonical_anomaly_ads"
+    else
+        echo "错误：非 canonical Hive 数据库必须显式设置 SOURCE_SYSTEM。"
+        echo "当前 HIVE_DATABASE=${HIVE_DATABASE}"
+        echo "示例：SOURCE_SYSTEM=local_sample_anomaly_ads HIVE_DATABASE=default bash $0 ${START_DT} ${END_DT}"
+        exit 1
+    fi
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -252,6 +266,52 @@ with open(sql_path, "w", encoding="utf-8") as out:
 
 print(f"Python 解析通过：{len(rows)} 行")
 PY
+
+# ------------------------------------------------------------
+# 写入前保护：禁止相同日期跨 source_system 静默覆盖
+# ------------------------------------------------------------
+echo
+echo "写入前保护检查：确认目标日期没有其他 source_system 数据..."
+
+HIVE_DT_LIST="$(cut -d$'\t' -f1 "${TEMP_HIVE_DATA}" | sort -u)"
+
+if [[ -z "${HIVE_DT_LIST}" ]]; then
+    echo "错误：无法从 Hive 数据中解析业务日期列表。"
+    exit 1
+fi
+
+DT_CONDITIONS=""
+while IFS= read -r DT_VALUE; do
+    if [[ -z "${DT_CONDITIONS}" ]]; then
+        DT_CONDITIONS="'${DT_VALUE}'"
+    else
+        DT_CONDITIONS="${DT_CONDITIONS}, '${DT_VALUE}'"
+    fi
+done <<< "${HIVE_DT_LIST}"
+
+CONFLICT_OUTPUT="$(
+    mysql \
+        --defaults-extra-file="${MYSQL_CNF}" \
+        --database="${MYSQL_DB}" \
+        --batch \
+        --raw \
+        --skip-column-names \
+        -e "
+SELECT
+    CONCAT_WS('\t', DATE_FORMAT(dt, '%Y-%m-%d'), COALESCE(source_system, ''))
+FROM ${MYSQL_TABLE}
+WHERE dt IN (${DT_CONDITIONS})
+  AND (source_system IS NULL OR source_system != '${SOURCE_SYSTEM}');
+"
+)"
+
+if [[ -n "${CONFLICT_OUTPUT}" ]]; then
+    echo "错误：以下业务日期已存在其他 source_system 的数据，拒绝覆盖。"
+    while IFS=$'\t' read -r CONFLICT_DT CONFLICT_SOURCE; do
+        echo "  日期=${CONFLICT_DT}，已有 source_system=${CONFLICT_SOURCE}，准备写入 source_system=${SOURCE_SYSTEM}"
+    done <<< "${CONFLICT_OUTPUT}"
+    exit 1
+fi
 
 echo
 echo "[3/4] 执行 MySQL 批量 UPSERT..."

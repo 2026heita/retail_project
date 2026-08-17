@@ -141,6 +141,32 @@ EOF
 chmod 600 "${MYSQL_CNF}"
 
 # ------------------------------------------------------------
+# 写入前保护：禁止相同日期跨 source_system 静默覆盖
+# ------------------------------------------------------------
+EXISTING_SOURCE="$(
+    mysql \
+        --defaults-extra-file="${MYSQL_CNF}" \
+        --database="${MYSQL_DB}" \
+        --batch \
+        --raw \
+        --skip-column-names \
+        -e "
+SELECT COALESCE(source_system, '')
+FROM ${MYSQL_TABLE}
+WHERE dt = '${BIZDATE}'
+LIMIT 1;
+"
+)"
+
+if [[ -n "${EXISTING_SOURCE}" && "${EXISTING_SOURCE}" != "${SOURCE_SYSTEM}" ]]; then
+    echo "错误：业务日期 ${BIZDATE} 已存在其他 source_system 的数据，拒绝覆盖。"
+    echo "当前日期：${BIZDATE}"
+    echo "已有 source_system：${EXISTING_SOURCE}"
+    echo "准备写入 source_system：${SOURCE_SYSTEM}"
+    exit 1
+fi
+
+# ------------------------------------------------------------
 # 3. 写入 MySQL
 # 主键已存在时更新，实现指定日期幂等同步
 # ------------------------------------------------------------

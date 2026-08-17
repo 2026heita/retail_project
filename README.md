@@ -988,7 +988,15 @@ Java 服务使用只读账号 `retail_api_user`；`RETAIL_DB_PASSWORD` 必须与
 GET http://localhost:8080/api/v1/health
 GET http://localhost:8080/api/v1/dashboard/overview?date=2026-04-08
 GET http://localhost:8080/api/v1/dashboard/overview/trend?startDate=2026-04-08&endDate=2026-04-08
+GET http://localhost:8080/api/v1/dashboard/overview/comparison?date=2026-04-08
 ```
+
+### 最小复现边界说明
+
+最小样例只有一个业务日，因此 comparison 接口预期返回 `comparisonAvailable=false`，用于验证“上一可用业务日不存在”的边界契约。
+经营异常检测依赖连续多业务日数据及上一可用业务日比较，
+canonical anomaly 的完整链路与真实验证结果见“经营异常检测”章节。
+不要伪造 HIGH/MEDIUM anomaly sample，不为了让最小样例覆盖 anomaly 而修改样例数据。
 
 ---
 
