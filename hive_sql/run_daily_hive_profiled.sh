@@ -229,7 +229,10 @@ if [ "${START_STAGE_NO}" -le 3 ]; then
     run_hive_sql "13_build_ads_customer_preference" \
         "${BASE_DIR}/08_ads_high_value_customer_preference_hive.sql"
 
-    run_shell_task "14_result_quality_gate" \
+    run_hive_sql "14_build_ads_sales_overview" \
+        "${BASE_DIR}/29_ads_sales_overview_daily_hive.sql"
+
+    run_shell_task "15_result_quality_gate" \
         "${BASE_DIR}/run_result_quality_gate_hive.sh"
 fi
 
