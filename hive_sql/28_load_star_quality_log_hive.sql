@@ -69,6 +69,29 @@ dim_user_metrics AS (
     WHERE dt = '${hiveconf:bizdate}'
 ),
 
+scd2_overlap_metrics AS (
+    SELECT
+        COALESCE(COUNT(1), 0) AS scd2_overlap_cnt
+    FROM (
+        SELECT
+            customerid,
+            user_id,
+            start_date,
+            end_date,
+
+            MAX(end_date) OVER (
+                PARTITION BY customerid
+                ORDER BY start_date, user_id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS previous_max_end_date
+
+        FROM dim_user
+        WHERE dt = '${hiveconf:bizdate}'
+    ) t
+    WHERE previous_max_end_date IS NOT NULL
+      AND start_date <= previous_max_end_date
+),
+
 duplicate_current_user_metrics AS (
     SELECT
         COUNT(1) AS duplicate_current_customer_cnt
@@ -226,6 +249,8 @@ all_metrics AS (
         du.duplicate_user_id_cnt,
         duc.duplicate_current_customer_cnt,
 
+        so.scd2_overlap_cnt,
+
         dp.dim_product_row_cnt,
         dp.distinct_stockcode_cnt,
 
@@ -251,6 +276,7 @@ all_metrics AS (
     FROM dwd_metrics dwd
     CROSS JOIN dim_user_metrics du
     CROSS JOIN duplicate_current_user_metrics duc
+    CROSS JOIN scd2_overlap_metrics so
     CROSS JOIN dim_product_metrics dp
     CROSS JOIN dim_geo_metrics dg
     CROSS JOIN dim_date_metrics dd
@@ -283,7 +309,7 @@ SELECT
 FROM all_metrics m
 
 LATERAL VIEW STACK(
-    17,
+    18,
 
     'dim_user',
     'STAR_001',
@@ -336,9 +362,22 @@ LATERAL VIEW STACK(
     '= 0',
     CONCAT(
         'Current versions whose end_date is not 9999-12-31: ',
-        CAST(m.invalid_current_end_date_cnt AS STRING),
+         CAST(m.invalid_current_end_date_cnt AS STRING),
         ', expected 0'
     ),
+
+    'dim_user',
+    'STAR_018',
+    'scd2_history_interval_non_overlap',
+    'BLOCK',
+    CAST(m.scd2_overlap_cnt AS BIGINT),
+    CAST(m.scd2_overlap_cnt AS DECIMAL(38,6)),
+    '= 0',
+    CONCAT(
+      'Overlapping SCD2 historical versions: ',
+       CAST(m.scd2_overlap_cnt AS STRING),
+    ', expected 0'
+),
 
     'dim_user',
     'STAR_013',
