@@ -345,7 +345,7 @@ bash ${PROJECT_HOME}/hive/run_all_hive.sh ${bizdate}
 统一口径：
 
 ```text
-最完整实现：20 步 Shell 主链路
+最完整实现：21 步 Shell 主链路
 调度演示：12 节点 DolphinScheduler DAG
 ```
 
@@ -485,4 +485,4 @@ docs/result_screenshots/03_dwd_quality_gate_passed.png
 
 同时需要明确：
 
-> 当前 JSON 是历史已验收的 12 节点演示 DAG，最新仓库中的完整实现是 20 步 Shell 主链路。由于正常 ODS 已改为从 ODS Raw 读取，旧 DAG 不能在未补充 Raw 前置任务的情况下直接套用最新 SQL。
+> 当前 JSON 是历史已验收的 12 节点演示 DAG，最新仓库中的完整实现是 21 步 Shell 主链路。由于正常 ODS 已改为从 ODS Raw 读取，旧 DAG 不能在未补充 Raw 前置任务的情况下直接套用最新 SQL。
