@@ -108,8 +108,8 @@ flowchart LR
 ```
 
 > **Scope Note**：
-> - **Canonical DWD/DWS/ADS**：覆盖 604 个真实业务日期（2009-12-01 ~ 2011-12-09）
-> - **Canonical Star**：连续验证至 2010-03-04，覆盖 73 个真实业务日期（不是 604 天全量历史）
+> - **Canonical DWD/DWS/ADS**：覆盖 604 个交易日期（2009-12-01 ~ 2011-12-09）
+> - **Canonical Star**：连续验证至 2010-03-04，覆盖 73 个交易日期（不是 604 个交易日期的全量历史）
 > - **Serving 主线**：DWD → ads_sales_overview_daily_hive → Hive/MySQL 同步与对账 → retail_bi.bi_sales_overview_daily → Spring Boot API → React 分析平台
 > - **经营异常主线**：DWD → ads_sales_anomaly_daily_hive → Hive/MySQL 同步 → retail_bi.bi_sales_anomaly_daily → Spring Boot 异常 API
 > - **Star 分支**：另一条建模验证分支，不是 serving 必经路径
