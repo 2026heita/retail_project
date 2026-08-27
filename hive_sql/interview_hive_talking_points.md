@@ -22,7 +22,7 @@
 >
 > 后续 DWD 负责过滤无效数量、无效价格、空客户和取消订单，并统一订单时间；DWS 沉淀客户价值和国家销售汇总；ADS 产出高价值客户销售贡献、客户层级分布、国家销售排行和高价值客户商品偏好。
 >
-> 工程化方面，我使用 `bizdate`、ORC、日期分区和 `INSERT OVERWRITE` 支持指定日期重跑，并增加区间回刷、T+1 修正、内容指纹幂等性检查，以及 DWD、DWS/ADS、星型模型三层业务质量门禁。完整 Shell 主链路共 20 步，任意 BLOCK 规则失败都会返回非零状态并阻断下游。
+> 工程化方面，我使用 `bizdate`、ORC、日期分区和 `INSERT OVERWRITE` 支持指定日期重跑，并增加区间回刷、T+1 修正、内容指纹幂等性检查，以及 DWD、DWS/ADS、星型模型三层业务质量门禁。完整 Shell 主链路共 21 个顶层执行步骤，覆盖 ODS 入仓、DWD、DWS/ADS、BI 经营总览 ADS、各层质量门禁、Star Schema 和最终结果展示；任意 BLOCK 门禁失败都会返回非零状态并阻断下游。
 >
 > 星型模型部分包含 SCD2 用户维度、商品维度、日期维度、地理维度、订单事实表和星型客户价值汇总。当前 `2026-04-08` 历史工程回归（engineering_legacy_3x）中，源表与 Raw 都是 3,202,113 行，DWD 与事实表都是 2,416,593 行、金额都是 53,230,287.48，星型模型 12 条规则全部通过。
 >
@@ -42,7 +42,7 @@
 >
 > 第三部分是星型模型和工程化。用户维度采用按业务日物化完整历史快照的 SCD2，每个 dt 分区保存截至当天的完整历史状态，属性未变化时延续当前版本，属性变化才关闭旧版本并创建新版本；事实表按订单日期匹配有效期内的用户版本，不是只关联当前版本。项目还有区间回刷、T+1 修正、幂等性指纹检查和历史回刷保护。
 >
-> 完整 `run_all_hive.sh` 共 20 步，包含 ODS 入仓断言、DWD 6 条 BLOCK 规则、DWS/ADS 11 条 BLOCK/WARN 规则和星型模型 17 条规则。DolphinScheduler 的 12 节点 JSON 已完成演示验收，但它是较早版本，目前最完整的链路仍然是 Shell 主脚本，调度 JSON 尚未同步新增的 Raw、Reject、结果门禁和星型模型。
+> 完整 run_all_hive.sh 当前共 21 个顶层执行步骤，包含 ODS Raw/Reject/正常 ODS、ODS 入仓断言、DWD 及 6 条 BLOCK 规则、DWS/ADS 指标构建、BI 经营总览日 ADS、DWS/ADS 11 条结果质量规则，以及 Star Schema 与 17 条 Star 质量规则，最后输出结果检查。DolphinScheduler 的 12 节点 JSON 已完成演示验收，但它是较早版本，目前最完整的链路仍然是 Shell 主脚本，调度 JSON 尚未同步新增的 Raw、Reject、结果门禁和星型模型。
 
 ---
 
@@ -174,7 +174,7 @@ ads_sales_anomaly_daily_hive
 
 ---
 
-## 8. 完整主链路为什么是 20 步
+## 8. 完整主链路为什么是 21 步
 
 当前入口：
 
@@ -182,34 +182,35 @@ ads_sales_anomaly_daily_hive
 bash run_all_hive.sh 2026-04-08
 ```
 
-20 步为：
+21 个顶层执行步骤为：
 
 ```text
 01  创建 ODS Raw
 02  创建 ODS Reject
 03  创建正常 ODS
 04  加载 ODS Raw
-05  加载 Reject
+05  加载 ODS Reject
 06  加载正常 ODS
 07  ODS 入仓完整性门禁
 08  ODS 内容检查
 09  创建 DWD
 10  加载 DWD
 11  DWD 质量门禁
-12  客户价值 DWS
-13  国家销售 DWS
-14  高价值客户贡献 ADS
-15  客户层级分布 ADS
-16  国家销售排行 ADS
-17  高价值客户偏好 ADS
-18  DWS/ADS 结果门禁
-19  星型模型与星型门禁
-20  结果展示
+12  构建客户价值 DWS
+13  构建国家销售 DWS
+14  构建高价值客户贡献 ADS
+15  构建客户层级分布 ADS
+16  构建国家销售排行 ADS
+17  构建高价值客户偏好 ADS
+18  构建 BI 经营总览日 ADS
+19  DWS/ADS 结果质量门禁
+20  构建并校验 Star Schema
+21  最终结果展示
 ```
 
 面试表达：
 
-> 以前是 15 步，增加 Raw、Reject、ODS 入仓门禁和新的执行顺序后，当前主脚本是 20 步。面试时不能再说 15 步。
+> 主链路早期只有约 15 个步骤；加入 ODS Raw、Reject、ODS 入仓门禁等工程能力后扩展到 20 步；后来又将 BI 经营总览日 ADS（ads_sales_overview_daily_hive）正式接入主入口，因此当前 run_all_hive.sh 为 21 个顶层执行步骤。面试时应以当前源码为准，不再使用 15 步或 20 步的旧口径。
 
 ---
 
@@ -712,7 +713,7 @@ PROJECT_HOME=/home/your_user/retail_hive_project
 
 关键边界：
 
-> 当前 DolphinScheduler JSON 是已验收的较早 12 节点 DAG，不包含后来增加的 ODS Raw、Reject、ODS 入仓门禁、DWS/ADS 结果门禁和星型模型。当前最完整执行链路是 `run_all_hive.sh`，不能说 DolphinScheduler 已经完整调度全部 20 步。
+> 当前 DolphinScheduler JSON 是已验收的较早 12 节点演示 DAG，尚未同步后来新增的 ODS Raw、Reject、ODS 入仓门禁、DWS/ADS 结果门禁、Star Schema 以及 BI 经营总览 ADS 等能力；当前最完整执行链路以 `run_all_hive.sh` 的 21 个顶层执行步骤为准，因此不能声称 DolphinScheduler 已经覆盖最新完整链路。
 
 为什么 `schedule=null`：
 
@@ -775,7 +776,7 @@ MySQL 调度流程：
 
 - “这是生产级实时数仓。”
 - “每天只读取新增数据。”
-- “DolphinScheduler 已经完整调度最新 20 步。”
+- “DolphinScheduler 已经完整调度最新 21 步。”
 - “Reject 已经覆盖所有脏数据。”
 - “SCD2 在所有 604 个业务日期上的多版本属性变化都已完整验证。”（当前仅连续验证至 2010-03-04，73 个真实业务日期，并包含 customerid=12431 的真实属性变化案例）
 - “CRC32 能绝对保证数据内容不变。”
@@ -919,7 +920,7 @@ MySQL 调度流程：
 1. 能否说清楚 Raw、Reject、正常 ODS 的区别？
 2. 能否说清楚 batch_dt 与 dt 的区别？
 3. 能否说清楚为什么不是 CDC 真增量？
-4. 能否准确说出 run_all_hive.sh 是 20 步？
+4. 能否准确说出 run_all_hive.sh 当前是 21 个顶层执行步骤？
 5. 能否区分 ODS 内容检查和 ODS 入仓门禁？
 6. 能否说明一个入口门禁加三层业务门禁？
 7. 能否说清楚 BLOCK 与 WARN 的不同？
@@ -934,7 +935,7 @@ MySQL 调度流程：
 16. 能否说清楚代表性真实业务日的耗时和主要瓶颈？
 17. 能否说明为什么没有盲目做深度性能重构？
 18. 能否说清楚 MySQL 与 Hive 不是自动连通的？
-19. 能否说明 DolphinScheduler 12 节点 DAG 与 20 步 Shell 的差异？
+19. 能否说明 DolphinScheduler 12 节点 DAG 与当前 21 个顶层 Shell 执行步骤的差异？
 20. 能否主动说明项目的真实边界而不夸大？
 ```
 
