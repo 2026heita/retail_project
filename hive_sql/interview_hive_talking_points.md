@@ -798,9 +798,15 @@ MySQL 调度流程：
 ## 25. 简历项目描述
 
 ```text
-零售数据分析 MySQL 到 Hive 离线数仓迁移
+零售离线数仓与 BI Serving 工程项目
 
-- 基于约 320 万行工程扩展零售订单数据，将 MySQL 分析链路迁移到 Hive，构建 ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS 和星型模型。
+- 基于约 106 万行公开零售交易明细，覆盖 604 个真实业务日期，
+  构建 ODS Raw/Reject → DWD → DWS → ADS 离线数仓链路，
+  并打通 Hive ADS → MySQL Serving → Spring Boot API。
+
+- 另保留 engineering_legacy_3x 约 320 万行历史工程扩展数据，
+  仅用于早期分区重跑、质量门禁和 Star Schema 工程回归验证，
+  不作为当前真实业务数据规模口径。
 - 设计 Raw 原始保真和 Reject 技术解析异常分流（6 类：日期/数量/价格的空值与解析失败），使用 batch_dt 与 dt 区分处理批次和业务日期；通过三组行数对账和 ASSERT_TRUE 构建 ODS 入仓完整性门禁。
 - 使用 ORC、日期分区、bizdate 参数和 INSERT OVERWRITE 支持指定日期重跑，并实现区间回刷、T+1 修正和分阶段局部重跑。
 - 建立 DWD 6 条、DWS/ADS 11 条和星型模型规则（历史工程验证时为 12 条，当前规则定义为 17 条）；BLOCK 失败时 Shell 返回非零状态，阻断下游任务。
