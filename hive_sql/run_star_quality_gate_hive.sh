@@ -141,17 +141,20 @@ echo "  block_pass_cnt=${BLOCK_PASS_CNT}"
 echo "  block_fail_cnt=${BLOCK_FAIL_CNT}"
 
 # 6. 验证质量门禁指标
-if [ "${RULE_CNT}" -ne 17 ] || [ "${DISTINCT_RULE_CNT}" -ne 17 ]; then
+EXPECTED_RULE_CNT=18
+
+if [ "${RULE_CNT}" -ne "${EXPECTED_RULE_CNT}" ] || \
+   [ "${DISTINCT_RULE_CNT}" -ne "${EXPECTED_RULE_CNT}" ]; then
     echo "ERROR: BLOCK_QUALITY_RULE_INCOMPLETE"
     echo "Quality rules incomplete."
-    echo "Expected 17 rules, got rule_cnt=${RULE_CNT}, distinct_rule_cnt=${DISTINCT_RULE_CNT}."
+    echo "Expected ${EXPECTED_RULE_CNT} rules, got rule_cnt=${RULE_CNT}, distinct_rule_cnt=${DISTINCT_RULE_CNT}."
     exit 1
 fi
 
-if [ "${BLOCK_PASS_CNT}" -ne 17 ]; then
+if [ "${BLOCK_PASS_CNT}" -ne "${EXPECTED_RULE_CNT}" ]; then
     echo "ERROR: BLOCK_QUALITY_FAILED"
     echo "Quality gate did not pass all BLOCK rules."
-    echo "Expected 17 BLOCK PASS, got ${BLOCK_PASS_CNT}."
+    echo "Expected ${EXPECTED_RULE_CNT} BLOCK PASS, got ${BLOCK_PASS_CNT}."
     exit 1
 fi
 

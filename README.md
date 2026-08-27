@@ -33,7 +33,7 @@
 | 方向 | 已完成内容 |
 |---|---|
 | 数仓分层 | ODS Raw、ODS Reject、正常 ODS、DWD、DWS、ADS、星型模型 |
-| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 17 条规则（历史工程验证 12/12 PASS；当前 canonical 规则定义 STAR_001~STAR_017，共 17 条 BLOCK） |
+| 数据质量 | ODS 入仓对账，DWD 6 条规则，DWS / ADS 11 条规则，星型模型 18 条规则（历史工程验证 12/12 PASS；当前 canonical 规则定义 STAR_001~STAR_018，共 18 条 BLOCK） |
 | 工程能力 | 指定日期重跑、区间回刷、T+1 修正、内容指纹幂等检查、批次日志 |
 | 维度建模 | 按业务日物化完整历史快照的 SCD2 用户维度（属性未变化时沿用 current 版本，属性变化时关闭旧版本并生成新版本）、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
@@ -104,7 +104,7 @@ flowchart LR
     ANOMALY_MYSQL --> ANOMALY_API["Spring Boot 异常 API<br/>/api/v1/dashboard/anomalies"]
 
     G2 --> STAR["星型模型分支<br/>SCD2 + 事实表<br/>验证至 2010-03-04<br/>73 个真实业务日期"]
-    STAR --> G3["星型模型门禁<br/>17 条 BLOCK 规则"]
+    STAR --> G3["星型模型门禁<br/>18 条 BLOCK 规则"]
 ```
 
 > **Scope Note**：
@@ -327,7 +327,7 @@ ODS 入仓完整性
 |---|---:|---|
 | DWD | 6 | 无效数量、无效价格、空客户、分区非空、行数对账、时间格式 |
 | DWS / ADS | 11 | 金额对账、核心结果非空、占比汇总、贡献率范围 |
-| 星型模型 | 17（当前规则定义） | SCD2 唯一性、事实表主键、行数与金额对账、维度关联；历史工程验证时为 12 条（12/12 PASS），当前 canonical 规则定义为 STAR_001~STAR_017，共 17 条 BLOCK |
+| 星型模型 | 17（当前规则定义） | SCD2 唯一性、事实表主键、行数与金额对账、维度关联；历史工程验证时为 12 条（12/12 PASS），当前 canonical 规则定义为 STAR_001~STAR_018，共 18 条 BLOCK |
 
 处理方式：
 
