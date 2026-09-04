@@ -544,6 +544,18 @@ GET /api/v1/dashboard/anomalies?startDate=2010-09-01&endDate=2010-09-30
 
 后端通过 `X-Request-Id` 请求头和响应体中的 `requestId` 串联请求日志。未传入请求 ID 时，过滤器会自动生成 UUID。
 
+#### 应用消费层新增：AI 异常诊断接口
+
+```http
+POST /api/v1/dashboard/anomalies/{dt}/ai-analysis
+```
+
+说明：
+
+- 该接口属于 **应用消费层** 能力，并非数仓能力；不涉及 Hive 建模、ADS 表、ETL 或数据同步的任何改动；
+- 复用已有经营异常数据，调用大语言模型辅助生成诊断结果（关键影响因素、影响评估、优化建议）；
+- 结果来源以 `source` 标识：`AI`（大语言模型正常生成）或 `FALLBACK`（AI 服务不可用时降级返回规则口径结果）。
+
 ### 5.5 前端接入
 
 独立 React 分析平台通过以下接口加载趋势数据：
@@ -1599,6 +1611,8 @@ docs/result_screenshots/
 07_ads_customer_preference_20260408.png
 08_light_bi_dashboard_top_20260408.png
 09_light_bi_dashboard_bottom_20260408.png
+14_daily_operation_comparison.png
+15_canonical_sales_trend.png
 ```
 
 核心截图预览：
@@ -1615,6 +1629,21 @@ docs/result_screenshots/
 
 - `08_light_bi_dashboard_top_20260408.png`：高价值客户贡献和客户分层；
 - `09_light_bi_dashboard_bottom_20260408.png`：国家销售 Top10 和高价值客户偏好商品 Top10。
+
+BI 分析补充截图（位于 `docs/result_screenshots/`）：
+
+- `14_daily_operation_comparison.png`：业务日期经营指标对比分析；
+- `15_canonical_sales_trend.png`：基于 canonical 数据的销售趋势分析。
+
+异常诊断与数据概览（位于 `docs/evidence/`）：
+
+| 文件名 | 内容说明 |
+|---|---|
+| `anomaly_analysis_canonical.png` | 基于 canonical 真实业务数据的经营异常分析结果。 |
+| `ai_anomaly_diagnosis_demo.png` | 经营异常智能诊断辅助能力演示：展示关键影响因素、影响评估与优化建议；为业务洞察辅助能力，非预测模型。 |
+| `dataset_profile_overview.png` | 数据规模、来源与数据概览，用于提高项目可信度。 |
+
+> 说明：异常识别仍由既有规则逻辑完成；AI 异常诊断属于应用消费层的大语言模型辅助解读，相关接口说明见「5.4 应用消费层新增：AI 异常诊断接口」。
 
 ### 16.2 历史多日验证截图
 

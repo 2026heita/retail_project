@@ -1,7 +1,7 @@
 # 零售离线数仓与 BI 应用闭环
 
 > MySQL + Hive + DolphinScheduler + Spring Boot + React
-
+> 想快速了解项目架构、核心能力和验证边界，可先阅读：[项目简版说明](docs/project_brief.md)
 > **零售 BI 全链路闭环项目**：围绕零售经营分析场景，完成从 Hive 数仓分层（ODS/DWD/DWS/ADS）、数据质量校验，到 Spring Boot 指标服务和 React BI 展示的完整链路，支持经营概览、趋势分析与日环比分析。
 
 本项目以零售订单数据为基础，完成了从数据清洗、离线数仓分层、质量门禁、调度编排，到 ADS 指标同步、Java 查询 API 和前端 BI 分析的完整闭环。
@@ -12,6 +12,7 @@
 - **多日趋势分析**：按日期范围查询经营趋势，支持前端时间序列图展示
 - **日环比分析**：对比当前日与同一 source_system 下上一可用业务日，计算五项指标的环比变化百分比
 - **经营异常分析**：基于规则检测日度经营异常，识别 HIGH / MEDIUM 等级异常并分析主要驱动指标
+- **AI 异常智能诊断**：对单条经营异常调用大语言模型辅助生原因分析（关键影响因素、风险等级、影响评估与优化建议），并标注 AI / FALLBACK 结果来源
 
 项目重点不是堆叠技术名词，而是展示一条可以解释、可以重跑、可以对账、可以验收的工程链路：
 
@@ -38,7 +39,7 @@
 | 维度建模 | 按业务日物化完整历史快照的 SCD2 用户维度（属性未变化时沿用 current 版本，属性变化时关闭旧版本并生成新版本）、商品/日期/地理维度、订单事实表 |
 | 调度实践 | DolphinScheduler 3.2.2、MySQL 元数据库、SSH 调用 Hive 主机、12 节点演示 DAG |
 | BI 指标 | 销售额、订单数、客户数、销量、客单价五项日粒度指标；经营异常日汇总（ads_sales_anomaly_daily_hive，604 个真实业务日期） |
-| Java 服务 | 单日概览、日期范围趋势、日环比分析、经营异常查询（/api/v1/dashboard/anomalies）、Bean Validation、统一响应、全局异常、requestId |
+| Java 服务 | 单日概览、日期范围趋势、日环比分析、经营异常查询（/api/v1/dashboard/anomalies）、AI 异常智能诊断（/api/v1/dashboard/anomalies/{dt}/ai-analysis）、Bean Validation、统一响应、全局异常、requestId |
 | 自动化验证 | GitHub Actions 执行后端 `clean verify` 与数仓 Shell 静态检查；Testcontainers + MySQL 8 验证 MyBatis Mapper 真实 SQL |
 | 前端闭环 | 零售 BI Connector、KPI 经营概览、日环比变化分析、后端 API 联通、时间趋势图、CSV 导出 |
 
@@ -102,6 +103,8 @@ flowchart LR
     ANOMALY_ADS --> ANOMALY_SYNC["Shell 同步<br/>source_rows=604<br/>target_rows=604"]
     ANOMALY_SYNC --> ANOMALY_MYSQL["MySQL 异常表<br/>retail_bi.bi_sales_anomaly_daily<br/>604 行<br/>source_system=retail_canonical_anomaly_ads"]
     ANOMALY_MYSQL --> ANOMALY_API["Spring Boot 异常 API<br/>/api/v1/dashboard/anomalies"]
+    ANOMALY_API --> AI_API["Spring Boot AI 诊断 API<br/>/api/v1/dashboard/anomalies/{dt}/ai-analysis"]
+    AI_API --> LLM["大语言模型<br/>异常原因 / 评估 / 建议"]
 
     G2 --> STAR["星型模型分支<br/>SCD2 + 事实表<br/>验证至 2010-03-04<br/>73 个真实业务日期"]
     STAR --> G3["星型模型门禁<br/>18 条 BLOCK 规则"]
@@ -738,6 +741,25 @@ GET /api/v1/dashboard/anomalies?startDate=yyyy-MM-dd&endDate=yyyy-MM-dd
 
 **CORS**：已允许 `https://datainsightkit.com` 和 `https://2026heita.github.io`
 
+### 10.5 AI 异常智能诊断（后端接入）
+
+**接口**：
+
+```http
+POST /api/v1/dashboard/anomalies/{dt}/ai-analysis
+```
+
+**说明**：
+- 根据业务日期查询已有经营异常数据（复用 `bi_sales_anomaly_daily`）
+- 仅抽取异常分析必要字段组装请求，调用大语言模型辅助生成诊断
+- 返回结构化结果：关键影响因素（keyDrivers）、影响评估（impactAssessment）、优化建议（suggestions）
+- 结果来源以 `source` 标识：`AI`（大语言模型正常生成）或 `FALLBACK`（AI 服务不可用时降级返回）
+
+**职责边界**：
+- 数仓负责数据清洗、指标计算与异常检测
+- 后端负责业务接口与 AI 诊断能力接入，AI 仅作辅助解读，不执行自动业务操作
+- AI 服务不可用或超时时返回降级结果，不影响既有异常检测链路
+
 ---
 
 ## 11. 已验证结果
@@ -877,6 +899,18 @@ Spring Boot 异常 API 真实验证：
 ![Spring Boot 异常 API 验证](docs/evidence/anomaly_api_high_2010-09-28.png)
 > 证明：查询 2010-09-28 返回 HIGH 等级异常，sourceSystem=retail_canonical_anomaly_ads，数据与 Hive 一致。
 
+基于 canonical 真实业务数据的经营异常分析：
+
+![Canonical 经营异常分析](docs/evidence/anomaly_analysis_canonical.png)
+
+经营异常智能诊断辅助能力演示（对单条经营异常展示关键影响因素、影响评估与优化建议，为业务洞察辅助能力，非预测模型）：
+
+![AI 异常智能诊断辅助演示](docs/evidence/ai_anomaly_diagnosis_demo.png)
+
+数据概览（展示数据规模与来源，佐证分析所用数据集可信度）：
+
+![数据集概览](docs/evidence/dataset_profile_overview.png)
+
 ---
 
 ## 12. 运行截图
@@ -902,6 +936,8 @@ docs/result_screenshots/
 07_ads_customer_preference_20260408.png
 08_light_bi_dashboard_top_20260408.png
 09_light_bi_dashboard_bottom_20260408.png
+14_daily_operation_comparison.png
+15_canonical_sales_trend.png
 ```
 
 历史多日验收截图：
